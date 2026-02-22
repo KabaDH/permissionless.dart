@@ -32,7 +32,7 @@ String encodeKernelWebAuthnSignature(
   // Extract signature components
   final authenticatorData = signature.authData!;
   final clientDataJSON = signature.clientDataJson!;
-  final typeIndex = BigInt.from(signature.getTypeLocation()!);
+  final typeIndex = BigInt.from(signature.getTypeLocation() ?? 0);
   final r = signature.r;
   final s = signature.s;
 

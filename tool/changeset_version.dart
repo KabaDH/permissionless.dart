@@ -12,8 +12,9 @@ void main(List<String> args) {
   try {
     _run();
   } catch (e, st) {
-    stderr.writeln('error: $e');
-    stderr.writeln(st);
+    stderr
+      ..writeln('error: $e')
+      ..writeln(st);
     exitCode = 1;
   }
 }
@@ -30,32 +31,33 @@ void _run() {
     throw Exception('No packages discovered under "$packagesRootDirName/".');
   }
 
-  final pkgByName = {for (var p in packages) p.name: p};
+  final pkgByName = {for (final p in packages) p.name: p};
 
-  // packageName -> list of PackageChange
   final pkgChanges = <String, List<PackageChange>>{};
 
   for (final cs in changesets) {
-    cs.packages.forEach((pkgName, bump) {
-      final pkg = pkgByName[pkgName];
-      if (pkg == null) {
+    for (final MapEntry(:key, :value) in cs.packages.entries) {
+      if (!pkgByName.containsKey(key)) {
         stderr.writeln(
-            'warning: changeset ${cs.path} references unknown package "$pkgName" – skipping that entry.');
-        return;
+          'warning: changeset ${cs.path} references unknown package "$key" – skipping that entry.',
+        );
+        continue;
       }
-      final list = pkgChanges.putIfAbsent(pkgName, () => []);
-      list.add(PackageChange(
-        title: cs.title,
-        bump: bump,
-        note: cs.note,
-        changesetPath: cs.path,
-      ));
-    });
+      (pkgChanges[key] ??= []).add(
+        PackageChange(
+          title: cs.title,
+          bump: value,
+          note: cs.note,
+          changesetPath: cs.path,
+        ),
+      );
+    }
   }
 
   if (pkgChanges.isEmpty) {
     stdout.writeln(
-        'No valid package entries in changesets – nothing to version.');
+      'No valid package entries in changesets – nothing to version.',
+    );
     return;
   }
 
@@ -79,19 +81,23 @@ void _run() {
     writePubspecVersion(pkg.pubspecPath, newVersion);
 
     stdout.writeln(
-        '  - $pkgName: $currentVersion -> $newVersion ($bump) [${pkg.path}]');
+      '  - $pkgName: $currentVersion -> $newVersion ($bump) [${pkg.path}]',
+    );
 
-    meta.packages.add(PackageRelease(
-      name: pkgName,
-      path: pkg.path,
-      fromVersion: currentVersion,
-      toVersion: newVersion,
-      bump: bump,
-      changes: changes,
-    ));
+    meta.packages.add(
+      PackageRelease(
+        name: pkgName,
+        path: pkg.path,
+        fromVersion: currentVersion,
+        toVersion: newVersion,
+        bump: bump,
+        changes: changes,
+      ),
+    );
   });
 
   writeReleaseMeta(meta);
   stdout.writeln(
-      '\nWrote release meta to $changesetDirName/$releaseMetaFileName');
+    '\nWrote release meta to $changesetDirName/$releaseMetaFileName',
+  );
 }

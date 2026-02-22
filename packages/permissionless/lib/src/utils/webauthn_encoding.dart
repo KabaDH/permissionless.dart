@@ -218,8 +218,7 @@ String getDummySafeWebAuthnSignature() {
   ]);
 
   // Dummy clientDataFields (the portion after challenge)
-  const dummyFields =
-      '"origin":"http://localhost:3000","crossOrigin":false';
+  const dummyFields = '"origin":"http://localhost:3000","crossOrigin":false';
 
   // Dummy r and s values
   final dummyR = BigInt.parse(

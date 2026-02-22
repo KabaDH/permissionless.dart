@@ -12,6 +12,7 @@ import '../../types/user_operation.dart';
 import '../../utils/encoding.dart';
 import '../../utils/erc7579.dart';
 import '../../utils/message_hash.dart';
+import '../../utils/rip7212.dart';
 import '../../utils/webauthn_encoding.dart';
 import '../account_owner.dart';
 import '../webauthn_owner.dart';
@@ -535,6 +536,17 @@ class KernelSmartAccount implements SmartAccount {
     ]);
   }
 
+  /// Determines if the P256 precompile should be used for WebAuthn signatures.
+  ///
+  /// Uses dynamic detection via [isRip7212Supported] when a [PublicClient]
+  /// is available, falling back to the static chain ID list.
+  Future<bool> _shouldUsePrecompile() async {
+    if (_config.publicClient != null) {
+      return isRip7212Supported(_config.publicClient!);
+    }
+    return shouldUseP256Precompile(chainId: chainId);
+  }
+
   @override
   String getStubSignature() {
     if (_config.version == KernelVersion.v0_2_4) {
@@ -547,11 +559,7 @@ class KernelSmartAccount implements SmartAccount {
     } else {
       // v0.3.x: signature format depends on owner type
       if (_isWebAuthn) {
-        // TODO: Enable RIP-7212 precompile detection once confirmed stable
-        // Currently disabled because some chains (including Sepolia) have
-        // unreliable precompile behavior (works in eth_call but fails in tx).
-        // See: https://github.com/ethereum-optimism/developers/discussions/791
-        const usePrecompiled = false;
+        final usePrecompiled = shouldUseP256Precompile(chainId: chainId);
         return getDummyKernelWebAuthnSignature(usePrecompiled: usePrecompiled);
       } else {
         return kernelDummyEcdsaSignature;
@@ -565,13 +573,13 @@ class KernelSmartAccount implements SmartAccount {
 
     if (_isWebAuthn) {
       // WebAuthn signing with P256 and special encoding
-      // TODO: Enable RIP-7212 precompile detection once confirmed stable
-      // Currently disabled because some chains (including Sepolia) have
-      // unreliable precompile behavior (works in eth_call but fails in tx).
-      const usePrecompiled = false;
+      final usePrecompiled = await _shouldUsePrecompile();
       final webAuthnOwner = _config.owner as WebAuthnAccountOwner;
       final sigData = await webAuthnOwner.signP256(userOpHash);
-      return encodeKernelWebAuthnSignature(sigData, usePrecompiled: usePrecompiled);
+      return encodeKernelWebAuthnSignature(
+        sigData,
+        usePrecompiled: usePrecompiled,
+      );
     }
 
     // ECDSA signing
@@ -648,11 +656,13 @@ class KernelSmartAccount implements SmartAccount {
     final messageHash = hashMessage(message);
 
     if (_isWebAuthn) {
-      // TODO: Enable RIP-7212 precompile detection once confirmed stable
-      const usePrecompiled = false;
+      final usePrecompiled = await _shouldUsePrecompile();
       final webAuthnOwner = _config.owner as WebAuthnAccountOwner;
       final sigData = await webAuthnOwner.signP256(messageHash);
-      return encodeKernelWebAuthnSignature(sigData, usePrecompiled: usePrecompiled);
+      return encodeKernelWebAuthnSignature(
+        sigData,
+        usePrecompiled: usePrecompiled,
+      );
     }
 
     return _config.owner.signRawHash(messageHash);
@@ -666,12 +676,14 @@ class KernelSmartAccount implements SmartAccount {
   @override
   Future<String> signTypedData(TypedData typedData) async {
     if (_isWebAuthn) {
-      // TODO: Enable RIP-7212 precompile detection once confirmed stable
-      const usePrecompiled = false;
+      final usePrecompiled = await _shouldUsePrecompile();
       final webAuthnOwner = _config.owner as WebAuthnAccountOwner;
       final hash = hashTypedData(typedData);
       final sigData = await webAuthnOwner.signP256(hash);
-      return encodeKernelWebAuthnSignature(sigData, usePrecompiled: usePrecompiled);
+      return encodeKernelWebAuthnSignature(
+        sigData,
+        usePrecompiled: usePrecompiled,
+      );
     }
 
     return _config.owner.signTypedData(typedData);

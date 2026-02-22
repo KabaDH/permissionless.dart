@@ -11,8 +11,9 @@ void main(List<String> args) {
   try {
     _run();
   } catch (e, st) {
-    stderr.writeln('error: $e');
-    stderr.writeln(st);
+    stderr
+      ..writeln('error: $e')
+      ..writeln(st);
     exitCode = 1;
   }
 }
@@ -40,7 +41,8 @@ void _run() {
 
   deleteProcessedChangesets(meta);
   stdout.writeln(
-      '\nUpdated changelogs and deleted processed changesets + release meta.');
+    '\nUpdated changelogs and deleted processed changesets + release meta.',
+  );
 }
 
 void _updatePackageChangelog({
@@ -50,9 +52,8 @@ void _updatePackageChangelog({
   required List<PackageChange> changes,
 }) {
   final existingFile = File(changelogPath);
-  final existing = existingFile.existsSync()
-      ? existingFile.readAsStringSync()
-      : '';
+  final existing =
+      existingFile.existsSync() ? existingFile.readAsStringSync() : '';
 
   final newSection = _buildReleaseSection(version, date, changes);
   final merged = _mergeChangelog(existing, newSection);
@@ -62,10 +63,11 @@ void _updatePackageChangelog({
 }
 
 String _buildReleaseSection(
-    String version, String date, List<PackageChange> changes) {
-  final sb = StringBuffer();
-
-  sb.writeln('## $version — $date');
+  String version,
+  String date,
+  List<PackageChange> changes,
+) {
+  final sb = StringBuffer()..writeln('## $version — $date');
 
   // Group by bump type.
   final byBump = <String, List<PackageChange>>{
@@ -125,10 +127,10 @@ String _mergeChangelog(String existing, String newSection) {
   final header = lines.first;
   final rest = lines.skip(1).join('\n').trimLeft();
 
-  final sb = StringBuffer();
-  sb.writeln(header);
-  sb.writeln();
-  sb.writeln(newSection);
+  final sb = StringBuffer()
+    ..writeln(header)
+    ..writeln()
+    ..writeln(newSection);
   if (rest.isNotEmpty) {
     // Ensure at least one blank line before older sections.
     if (!rest.startsWith('## ')) {

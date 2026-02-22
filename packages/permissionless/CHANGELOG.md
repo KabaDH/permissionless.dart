@@ -5,14 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0-dev.2] - 2025-01-24
+## [0.2.0] - 2026-02-20
 
-### Fixed
-- **Monorepo**: Fixed `repository` URL in pubspec.yaml to point to package subdirectory for pub.dev score
-
-## [0.2.0-dev.1] - 2025-01-24
+### Added
+- **RIP-7212 Dynamic Detection**: `isRip7212Supported(PublicClient)` probes the P256 precompile
+  via `eth_call` with a known-valid Wycheproof test vector, detecting support on any chain
+  - Results cached per chain ID for the lifetime of the application
+  - `clearRip7212Cache()` for testing
+  - Falls back gracefully when the precompile is not deployed (revert → `false`)
+- **RIP-7212 Static Detection**: `supportsRip7212(chainId:)` and `shouldUseP256Precompile(chainId:)`
+  check against a curated set of 67 chain IDs known to support the P256 precompile
+- **RIP-7212 Chain Support**: Comprehensive `rip7212SupportedChainIds` set.
+- **RIP-7212 Constants**: `p256PrecompileAddress` (`0x0000...0100`)
+- **Kernel Precompile Integration**: Kernel WebAuthn accounts now dynamically detect P256
+  precompile support via `isRip7212Supported` when a `publicClient` is available
+  - `signUserOperation`, `signMessage`, `signTypedData` use dynamic detection (async)
+  - `getStubSignature` uses static chain ID list (sync, for gas estimation)
+  - Falls back to static `shouldUseP256Precompile` when no `publicClient` is configured
 
 ### Changed
+- **Dependencies**: Bumped `web3dart` to `^3.0.2`
 - **Monorepo**: Restructured as a Dart pub workspace monorepo
   - Package moved to `packages/permissionless/`
   - Uses native Dart pub workspaces (`resolution: workspace`)

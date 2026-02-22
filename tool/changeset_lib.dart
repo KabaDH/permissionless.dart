@@ -12,12 +12,6 @@ const releaseMetaFileName = '_current_release.json';
 typedef PackageBumps = Map<String, String>;
 
 class ChangesetFile {
-  final String path;
-  final String title;
-  final String date; // YYYY-MM-DD
-  final PackageBumps packages;
-  final String note;
-
   ChangesetFile({
     required this.path,
     required this.title,
@@ -25,27 +19,28 @@ class ChangesetFile {
     required this.packages,
     required this.note,
   });
+
+  final String path;
+  final String title;
+  final String date; // YYYY-MM-DD
+  final PackageBumps packages;
+  final String note;
 }
 
 class PackageInfo {
-  final String name;
-  final String path; // path to package dir (e.g. packages/core)
-  final String pubspecPath;
-
   PackageInfo({
     required this.name,
     required this.path,
     required this.pubspecPath,
   });
+
+  final String name;
+  final String path; // path to package dir (e.g. packages/core)
+  final String pubspecPath;
 }
 
 // A single change entry for a specific package coming from a changeset file.
 class PackageChange {
-  final String title;
-  final String bump; // patch|minor|major
-  final String note;
-  final String changesetPath;
-
   PackageChange({
     required this.title,
     required this.bump,
@@ -53,30 +48,28 @@ class PackageChange {
     required this.changesetPath,
   });
 
+  factory PackageChange.fromJson(Map<String, dynamic> json) => PackageChange(
+        title: json['title'] as String,
+        bump: json['bump'] as String,
+        note: json['note'] as String,
+        changesetPath: json['changesetPath'] as String,
+      );
+
+  final String title;
+  final String bump; // patch|minor|major
+  final String note;
+  final String changesetPath;
+
   Map<String, dynamic> toJson() => {
         'title': title,
         'bump': bump,
         'note': note,
         'changesetPath': changesetPath,
       };
-
-  static PackageChange fromJson(Map<String, dynamic> json) => PackageChange(
-        title: json['title'] as String,
-        bump: json['bump'] as String,
-        note: json['note'] as String,
-        changesetPath: json['changesetPath'] as String,
-      );
 }
 
 // Release info for one package.
 class PackageRelease {
-  final String name;
-  final String path;
-  final String fromVersion;
-  final String toVersion;
-  final String bump; // max bump for this package
-  final List<PackageChange> changes;
-
   PackageRelease({
     required this.name,
     required this.path,
@@ -86,16 +79,7 @@ class PackageRelease {
     required this.changes,
   });
 
-  Map<String, dynamic> toJson() => {
-        'name': name,
-        'path': path,
-        'fromVersion': fromVersion,
-        'toVersion': toVersion,
-        'bump': bump,
-        'changes': changes.map((c) => c.toJson()).toList(),
-      };
-
-  static PackageRelease fromJson(Map<String, dynamic> json) => PackageRelease(
+  factory PackageRelease.fromJson(Map<String, dynamic> json) => PackageRelease(
         name: json['name'] as String,
         path: json['path'] as String,
         fromVersion: json['fromVersion'] as String,
@@ -105,33 +89,49 @@ class PackageRelease {
             .map((e) => PackageChange.fromJson(e as Map<String, dynamic>))
             .toList(),
       );
+
+  final String name;
+  final String path;
+  final String fromVersion;
+  final String toVersion;
+  final String bump; // max bump for this package
+  final List<PackageChange> changes;
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'path': path,
+        'fromVersion': fromVersion,
+        'toVersion': toVersion,
+        'bump': bump,
+        'changes': changes.map((c) => c.toJson()).toList(),
+      };
 }
 
 // Top-level release meta for all packages in this release.
 class ReleaseMeta {
-  final String created; // ISO timestamp
-  final String date; // YYYY-MM-DD
-  final List<PackageRelease> packages;
-
   ReleaseMeta({
     required this.created,
     required this.date,
     required this.packages,
   });
 
-  Map<String, dynamic> toJson() => {
-        'created': created,
-        'date': date,
-        'packages': packages.map((p) => p.toJson()).toList(),
-      };
-
-  static ReleaseMeta fromJson(Map<String, dynamic> json) => ReleaseMeta(
+  factory ReleaseMeta.fromJson(Map<String, dynamic> json) => ReleaseMeta(
         created: json['created'] as String,
         date: json['date'] as String,
         packages: (json['packages'] as List<dynamic>)
             .map((e) => PackageRelease.fromJson(e as Map<String, dynamic>))
             .toList(),
       );
+
+  final String created; // ISO timestamp
+  final String date; // YYYY-MM-DD
+  final List<PackageRelease> packages;
+
+  Map<String, dynamic> toJson() => {
+        'created': created,
+        'date': date,
+        'packages': packages.map((p) => p.toJson()).toList(),
+      };
 }
 
 // Discover packages under ./packages/*/pubspec.yaml
@@ -147,11 +147,13 @@ List<PackageInfo> discoverPackages() {
     if (!pubspec.existsSync()) continue;
 
     final name = _readPubspecName(pubspec) ?? _basename(entity.path);
-    packages.add(PackageInfo(
-      name: name,
-      path: entity.path,
-      pubspecPath: pubspec.path,
-    ));
+    packages.add(
+      PackageInfo(
+        name: name,
+        path: entity.path,
+        pubspecPath: pubspec.path,
+      ),
+    );
   }
 
   packages.sort((a, b) => a.name.compareTo(b.name));
@@ -330,7 +332,7 @@ String maxBump(Iterable<String> bumps) {
 // Version manipulation: bump X.Y.Z based on patch/minor/major.
 // NB: this trims off any pre-release/build metadata.
 String nextVersion(String current, String bump) {
-  final base = current.split(RegExp(r'[-+]'))[0].trim();
+  final base = current.split(RegExp('[-+]'))[0].trim();
   final parts = base.split('.');
   if (parts.length != 3) {
     throw FormatException('invalid version "$current", expected X.Y.Z');
@@ -400,7 +402,7 @@ void writePubspecVersion(String pubspecPath, String newVersion) {
     throw Exception('no version: line to replace in $pubspecPath');
   }
 
-  file.writeAsStringSync(lines.join('\n') + '\n');
+  file.writeAsStringSync('${lines.join('\n')}\n');
 }
 
 // Meta read/write ==========================================================

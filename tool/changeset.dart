@@ -15,9 +15,10 @@ const changesetDirName = '.changesets';
 const packagesRootDirName = 'packages';
 
 void main(List<String> args) {
-  _run().catchError((e, st) {
-    stderr.writeln('error: $e');
-    stderr.writeln(st);
+  _run().catchError((Object e, StackTrace st) {
+    stderr
+      ..writeln('error: $e')
+      ..writeln(st);
     exitCode = 1;
   });
 }
@@ -57,8 +58,7 @@ Future<void> _run() async {
     throw Exception('title cannot be empty');
   }
 
-  stdout.writeln(
-      '\nEnter a longer description (markdown allowed). '
+  stdout.writeln('\nEnter a longer description (markdown allowed). '
       'End input with a single "." on its own line:');
   final note = _promptMultiline();
 
@@ -83,10 +83,11 @@ Future<void> _run() async {
 }
 
 List<int> _promptPackageSelection(int packageCount) {
-  stdout.writeln(
-      '\nSelect affected packages by number (space or comma-separated). '
-      'Example: 1 3 4');
-  stdout.write('Selection: ');
+  stdout
+    ..writeln(
+        '\nSelect affected packages by number (space or comma-separated). '
+        'Example: 1 3 4')
+    ..write('Selection: ');
   final line = stdin.readLineSync() ?? '';
   final tokens = line.split(RegExp(r'[,\s]+')).where((t) => t.isNotEmpty);
 
@@ -108,10 +109,11 @@ List<int> _promptPackageSelection(int packageCount) {
 }
 
 String _promptBumpForPackage(String packageName) {
-  stdout.writeln('\nSelect bump type for "$packageName":');
-  stdout.writeln('  1) patch');
-  stdout.writeln('  2) minor');
-  stdout.writeln('  3) major');
+  stdout
+    ..writeln('\nSelect bump type for "$packageName":')
+    ..writeln('  1) patch')
+    ..writeln('  2) minor')
+    ..writeln('  3) major');
 
   while (true) {
     stdout.write('Choice (1-3): ');
@@ -181,20 +183,19 @@ String _buildChangesetFile({
   required Map<String, String> packages,
   required DateTime now,
 }) {
-  final sb = StringBuffer();
-
-  sb.writeln('---');
-  sb.writeln('title: "${_escapeYamlString(title)}"');
-  sb.writeln('date: "${_dateOnly(now)}"');
-  sb.writeln('packages:');
+  final sb = StringBuffer()
+    ..writeln('---')
+    ..writeln('title: "${_escapeYamlString(title)}"')
+    ..writeln('date: "${_dateOnly(now)}"')
+    ..writeln('packages:');
   final sortedKeys = packages.keys.toList()..sort();
   for (final pkg in sortedKeys) {
     final bump = packages[pkg] ?? 'patch';
     sb.writeln('  $pkg: "$bump"');
   }
-  sb.writeln('---\n');
-
-  sb.writeln(note);
+  sb
+    ..writeln('---\n')
+    ..writeln(note);
   if (!note.endsWith('\n')) {
     sb.writeln();
   }
@@ -202,12 +203,9 @@ String _buildChangesetFile({
   return sb.toString();
 }
 
-String _escapeYamlString(String input) {
-  // Very minimal escaping for double-quoted YAML strings.
-  return input
-      .replaceAll(r'\', r'\\')
-      .replaceAll('"', r'\"');
-}
+// Very minimal escaping for double-quoted YAML strings.
+String _escapeYamlString(String input) =>
+    input.replaceAll(r'\', r'\\').replaceAll('"', r'\"');
 
 String _slugify(String input) {
   final lower = input.toLowerCase().trim();
@@ -216,10 +214,8 @@ String _slugify(String input) {
 
   for (final codeUnit in lower.codeUnits) {
     final c = String.fromCharCode(codeUnit);
-    final isLetter =
-        (codeUnit >= 97 && codeUnit <= 122); // a-z
-    final isDigit =
-        (codeUnit >= 48 && codeUnit <= 57); // 0-9
+    final isLetter = codeUnit >= 97 && codeUnit <= 122; // a-z
+    final isDigit = codeUnit >= 48 && codeUnit <= 57; // 0-9
 
     if (isLetter || isDigit) {
       buf.write(c);
@@ -233,7 +229,7 @@ String _slugify(String input) {
   }
 
   var slug = buf.toString();
-  slug = slug.replaceAll(RegExp(r'^-+'), '');
+  slug = slug.replaceAll(RegExp('^-+'), '');
   slug = slug.replaceAll(RegExp(r'-+$'), '');
   if (slug.isEmpty) slug = 'changeset';
   return slug;

@@ -571,6 +571,164 @@ void main() {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // RIP-7212 / _shouldUsePrecompile integration
+  //
+  // The WebAuthn signing path (signUserOperation, signMessage, signTypedData)
+  // now calls _shouldUsePrecompile() which uses isRip7212Supported(publicClient)
+  // when a publicClient is available, falling back to shouldUseP256Precompile.
+  //
+  // Full WebAuthn + isRip7212Supported testing requires a WebAuthnAccountOwner
+  // implementation and a mock PublicClient, which is covered by integration
+  // tests (see test/integration/). The tests below verify that ECDSA paths
+  // remain unaffected by the async _shouldUsePrecompile changes and that
+  // getStubSignature stays synchronous.
+  // ---------------------------------------------------------------------------
+
+  group('RIP-7212 / precompile regression (ECDSA path)', () {
+    late PrivateKeyOwner owner;
+
+    setUp(() {
+      owner = PrivateKeyOwner(testPrivateKey);
+    });
+
+    test('getStubSignature remains synchronous for ECDSA v0.3.1', () {
+      final account = createKernelSmartAccount(
+        owner: owner,
+        chainId: BigInt.from(1),
+        version: KernelVersion.v0_3_1,
+        address: mockAddress,
+      );
+
+      // getStubSignature must be synchronous (no Future return).
+      // This ensures ECDSA stub signatures are not broken by the async
+      // _shouldUsePrecompile changes that only affect the WebAuthn path.
+      final stub = account.getStubSignature();
+      expect(stub, equals(kernelDummyEcdsaSignature));
+    });
+
+    test('getStubSignature remains synchronous for ECDSA v0.2.4', () {
+      final account = createKernelSmartAccount(
+        owner: owner,
+        chainId: BigInt.from(1),
+        version: KernelVersion.v0_2_4,
+        address: mockAddress,
+      );
+
+      final stub = account.getStubSignature();
+      expect(stub, startsWith('0x00000000'));
+      // ROOT_MODE (4 bytes) + ECDSA signature (65 bytes) = 69 bytes = 138 hex
+      expect(stub.length, equals(140));
+    });
+
+    test('signUserOperation works without publicClient for ECDSA v0.3.1',
+        () async {
+      // Creating an account without publicClient should still allow ECDSA
+      // signing, since _shouldUsePrecompile is only invoked on the WebAuthn
+      // path. This test ensures the async precompile check does not regress
+      // the ECDSA flow.
+      final account = createKernelSmartAccount(
+        owner: owner,
+        chainId: BigInt.from(1),
+        version: KernelVersion.v0_3_1,
+        address: mockAddress,
+      );
+
+      final address = await account.getAddress();
+      final userOp = UserOperationV07(
+        sender: address,
+        nonce: BigInt.zero,
+        callData: '0x',
+        callGasLimit: BigInt.from(100000),
+        verificationGasLimit: BigInt.from(100000),
+        preVerificationGas: BigInt.from(21000),
+        maxFeePerGas: BigInt.from(1000000000),
+        maxPriorityFeePerGas: BigInt.from(1000000000),
+      );
+
+      final signature = await account.signUserOperation(userOp);
+
+      // ECDSA signature: 65 bytes = 130 hex + 0x prefix
+      expect(signature, startsWith('0x'));
+      expect(signature.length, equals(132));
+    });
+
+    test('signUserOperation works without publicClient for ECDSA v0.2.4',
+        () async {
+      final account = createKernelSmartAccount(
+        owner: owner,
+        chainId: BigInt.from(1),
+        version: KernelVersion.v0_2_4,
+        address: mockAddress,
+      );
+
+      final address = await account.getAddress();
+      final userOp = UserOperationV07(
+        sender: address,
+        nonce: BigInt.zero,
+        callData: '0x',
+        callGasLimit: BigInt.from(100000),
+        verificationGasLimit: BigInt.from(100000),
+        preVerificationGas: BigInt.from(21000),
+        maxFeePerGas: BigInt.from(1000000000),
+        maxPriorityFeePerGas: BigInt.from(1000000000),
+      );
+
+      final signature = await account.signUserOperation(userOp);
+
+      // ROOT_MODE prefix + 65-byte ECDSA = 69 bytes = 138 hex + 0x
+      expect(signature, startsWith('0x00000000'));
+      expect(signature.length, equals(140));
+    });
+
+    test(
+        'ECDSA signing produces deterministic results regardless of publicClient absence',
+        () async {
+      final account1 = createKernelSmartAccount(
+        owner: owner,
+        chainId: BigInt.from(1),
+        version: KernelVersion.v0_3_1,
+        address: mockAddress,
+      );
+      final account2 = createKernelSmartAccount(
+        owner: owner,
+        chainId: BigInt.from(1),
+        version: KernelVersion.v0_3_1,
+        address: mockAddress,
+      );
+
+      final address = await account1.getAddress();
+      final userOp = UserOperationV07(
+        sender: address,
+        nonce: BigInt.zero,
+        callData: '0x',
+        callGasLimit: BigInt.from(100000),
+        verificationGasLimit: BigInt.from(100000),
+        preVerificationGas: BigInt.from(21000),
+        maxFeePerGas: BigInt.from(1000000000),
+        maxPriorityFeePerGas: BigInt.from(1000000000),
+      );
+
+      final sig1 = await account1.signUserOperation(userOp);
+      final sig2 = await account2.signUserOperation(userOp);
+
+      expect(sig1, equals(sig2));
+    });
+
+    test('isWebAuthn is false for PrivateKeyOwner', () {
+      final account = createKernelSmartAccount(
+        owner: owner,
+        chainId: BigInt.from(1),
+        version: KernelVersion.v0_3_1,
+        address: mockAddress,
+      );
+
+      // Confirm the account correctly identifies ECDSA owners as non-WebAuthn.
+      // This is the gate that prevents _shouldUsePrecompile from being called.
+      expect(account.isWebAuthn, isFalse);
+    });
+  });
+
   group('KernelSelectors', () {
     test('executeV2 selector is correct', () {
       expect(KernelSelectors.executeV2, equals('0xb61d27f6'));

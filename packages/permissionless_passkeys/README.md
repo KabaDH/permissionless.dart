@@ -14,10 +14,10 @@ Enable biometric authentication (Face ID, Touch ID, Windows Hello) for your smar
 
 ## Supported Account Types
 
-| Account | Version | EntryPoint | WebAuthn Signer |
-|---------|---------|------------|-----------------|
-| **Kernel** | v0.3.0, v0.3.1 | v0.7 | WebAuthn validator module |
-| **Safe** | v1.4.1, v1.5.0 | v0.7 | Shared WebAuthn signer |
+| Account    | Version        | EntryPoint | WebAuthn Signer           |
+| ---------- | -------------- | ---------- | ------------------------- |
+| **Kernel** | v0.3.0, v0.3.1 | v0.7       | WebAuthn validator module |
+| **Safe**   | v1.4.1, v1.5.0 | v0.7       | Shared WebAuthn signer    |
 
 ## Installation
 
@@ -26,7 +26,7 @@ Add to your `pubspec.yaml`:
 ```yaml
 dependencies:
   permissionless_passkeys: ^0.1.0
-  permissionless: ^0.1.2  # Required peer dependency
+  permissionless: ^0.2.0  # Required peer dependency
 ```
 
 Then run:
@@ -264,21 +264,24 @@ WebAuthn requires platform-specific configuration. See the [example app README](
 
 ## P256 Precompile (RIP-7212)
 
-For gas-efficient signature verification, use chains with the P256 precompile:
+For gas-efficient signature verification, use chains with the P256 precompile. The library supports two detection methods:
 
-| Chain | Precompile Support |
-|-------|-------------------|
-| Ethereum Mainnet | ✅ (Fusaka) |
-| Sepolia | ✅ |
-| Base | ✅ |
-| Optimism | ✅ |
-| Polygon | ✅ |
-| Arbitrum | ✅ |
-| Scroll | ✅ |
-| Linea | ✅ |
-| zkSync Era | ✅ |
+- **Dynamic detection** (recommended): `isRip7212Supported(publicClient)` probes the precompile via `eth_call` with a known-valid P256 test vector. Works on any chain, results are cached per chain ID.
+- **Static detection**: `shouldUseP256Precompile(chainId:)` checks against a curated list of 67 known-supported chain IDs.
 
-Without the precompile, signature verification falls back to Solidity-based P256, which uses ~800k gas vs ~3.5k with the precompile.
+Kernel accounts automatically use dynamic detection when a `publicClient` is configured, falling back to the static list otherwise.
+
+```dart
+import 'package:permissionless/permissionless.dart';
+
+// Dynamic: probe any chain via RPC
+final supported = await isRip7212Supported(publicClient);
+
+// Static: check against known chain IDs
+final supported = shouldUseP256Precompile(chainId: chainId);
+```
+
+Without the precompile, signature verification falls back to Solidity-based P256, which uses ~800k gas vs ~3.5k with the precompile (~6.9k on mainnet).
 
 ## Example
 

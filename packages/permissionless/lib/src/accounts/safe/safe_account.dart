@@ -370,7 +370,8 @@ class SafeSmartAccount implements SmartAccount {
               y: webAuthnOwner.y,
               p256VerifierAddress: p256Verifier.hex,
             ),
-            operation: OperationType.delegateCall, // DELEGATECALL to store in Safe's storage
+            operation: OperationType
+                .delegateCall, // DELEGATECALL to store in Safe's storage
           ),
         );
       }
@@ -724,22 +725,26 @@ class SafeSmartAccount implements SmartAccount {
     for (final owner in sortedOwners) {
       if (isWebAuthnAccount(owner)) {
         // WebAuthn stub: contract signature (dynamic)
-        signatureEntries.add(_SignatureEntry(
-          signer: _addresses.webAuthnSharedSignerAddress!,
-          data: getDummySafeWebAuthnSignature(),
-          isDynamic: true,
-        ),);
+        signatureEntries.add(
+          _SignatureEntry(
+            signer: _addresses.webAuthnSharedSignerAddress!,
+            data: getDummySafeWebAuthnSignature(),
+            isDynamic: true,
+          ),
+        );
       } else {
         // ECDSA stub: r (32) + s (32) + v (1) = 65 bytes
         final r =
             Hex.fromBigInt(Hex.toBigInt(owner.address.hex), byteLength: 32);
         const s = Hex.zero32;
         final v = Hex.fromBigInt(BigInt.from(1), byteLength: 1);
-        signatureEntries.add(_SignatureEntry(
-          signer: owner.address,
-          data: Hex.concat([r, s, v]),
-          isDynamic: false,
-        ),);
+        signatureEntries.add(
+          _SignatureEntry(
+            signer: owner.address,
+            data: Hex.concat([r, s, v]),
+            isDynamic: false,
+          ),
+        );
       }
     }
 
@@ -786,19 +791,23 @@ class SafeSmartAccount implements SmartAccount {
         final webAuthnOwner = owner as WebAuthnAccountOwner;
         final sigData = await webAuthnOwner.signP256(safeOpHash);
         final encoded = encodeSafeWebAuthnSignature(sigData);
-        signatureEntries.add(_SignatureEntry(
-          signer: _addresses.webAuthnSharedSignerAddress!,
-          data: encoded,
-          isDynamic: true,
-        ),);
+        signatureEntries.add(
+          _SignatureEntry(
+            signer: _addresses.webAuthnSharedSignerAddress!,
+            data: encoded,
+            isDynamic: true,
+          ),
+        );
       } else {
         // ECDSA signing - Safe signs the raw EIP-712 hash directly
         final sig = await owner.signRawHash(safeOpHash);
-        signatureEntries.add(_SignatureEntry(
-          signer: owner.address,
-          data: sig,
-          isDynamic: false,
-        ),);
+        signatureEntries.add(
+          _SignatureEntry(
+            signer: owner.address,
+            data: sig,
+            isDynamic: false,
+          ),
+        );
       }
     }
 
@@ -1012,8 +1021,7 @@ String _concatSignatures(List<_SignatureEntry> signatures) {
       final sigData = Hex.strip0x(sig.data);
       final dynamicPartLength = sigData.length ~/ 2;
 
-      final staticSignature =
-          '${Hex.strip0x(sig.signer.hex).padLeft(64, '0')}'
+      final staticSignature = '${Hex.strip0x(sig.signer.hex).padLeft(64, '0')}'
           '${dynamicPartPosition.toRadixString(16).padLeft(64, '0')}'
           '00'; // Signature type 0 = contract signature
 

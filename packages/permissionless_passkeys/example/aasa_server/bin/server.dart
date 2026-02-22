@@ -58,15 +58,18 @@ void main(List<String> args) async {
   print('  https://28fc478be30e2f.lhr.life/');
   print('');
   print('Verify the files are accessible at:');
-  print('  iOS:     https://28fc478be30e2f.lhr.life/.well-known/apple-app-site-association');
-  print('  Android: https://28fc478be30e2f.lhr.life/.well-known/assetlinks.json');
+  print(
+      '  iOS:     https://28fc478be30e2f.lhr.life/.well-known/apple-app-site-association');
+  print(
+      '  Android: https://28fc478be30e2f.lhr.life/.well-known/assetlinks.json');
   print('');
   if (teamId == 'YOUR_TEAM_ID') {
     print('WARNING: Update teamId in server.dart with your Apple Team ID!');
   }
   if (androidSha256 == 'YOUR_SHA256_FINGERPRINT') {
     print('WARNING: Update androidSha256 in server.dart for Android support!');
-    print('  Run: keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android');
+    print(
+        '  Run: keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android');
   }
   print('');
   print('Press Ctrl+C to stop the server.');
