@@ -1,0 +1,9 @@
+# This file configures the analyzer for the example app.
+# The include for package:lints/recommended.yaml is omitted here because
+# dart format cannot resolve workspace package URIs in sub-packages.
+# Lint rules are inherited from the workspace when running dart analyze.
+
+linter:
+  rules:
+    # avoid_print: false  # Uncomment to disable the `avoid_print` rule
+    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
