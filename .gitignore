@@ -4,6 +4,8 @@
 build/
 pubspec_overrides.yaml
 
+.a5c
+
 # IDE
 .idea/
 *.iml

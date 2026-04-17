@@ -54,6 +54,7 @@ class SafeSmartAccountConfig {
     this.hooks = const [],
     this.attesters = const [],
     this.attestersThreshold = 0,
+    this.useMultiSendForSetup = true,
   })  : threshold = threshold ?? BigInt.one,
         saltNonce = saltNonce ?? BigInt.zero {
     if (owners.isEmpty) {
@@ -140,6 +141,20 @@ class SafeSmartAccountConfig {
   ///
   /// A module must be approved by at least this many attesters to be installed.
   final int attestersThreshold;
+
+  /// Whether Safe setup is routed through MultiSend.
+  ///
+  /// When `true` (default), the Safe's `setup()` always delegatecalls MultiSend,
+  /// even for a single setup transaction. When `false` AND there is exactly one
+  /// setup transaction (e.g. just `enableModules`), `setup()` is called directly
+  /// with the single call's `to`/`data` instead of wrapping through MultiSend.
+  ///
+  /// Set to `false` to produce CREATE2 addresses compatible with
+  /// Safe Protocol Kit / relay-kit address derivation.
+  ///
+  /// This flag has no effect in ERC-7579 mode or when any WebAuthn owner is
+  /// present (both force additional setup calls).
+  final bool useMultiSendForSetup;
 
   /// Whether ERC-7579 mode is enabled.
   bool get isErc7579Enabled => erc7579LaunchpadAddress != null;
@@ -375,6 +390,27 @@ class SafeSmartAccount implements SmartAccount {
           ),
         );
       }
+    }
+
+    // Fast path: when opting out of MultiSend AND there is exactly one
+    // setup call (the default enableModules call, no WebAuthn, no extras),
+    // call Safe.setup directly with the single call's to/data. This matches
+    // permissionless.js@0.3.5's `useMultiSendForSetup: false` branch and
+    // produces CREATE2 addresses compatible with Safe Protocol Kit / relay-kit.
+    if (!_config.useMultiSendForSetup &&
+        multiSendCalls.length == 1 &&
+        !_hasWebAuthnOwner) {
+      final only = multiSendCalls.first;
+      return encodeSafeSetup(
+        owners: ownerAddresses,
+        threshold: _config.threshold,
+        to: only.to,
+        data: only.data,
+        fallbackHandler: _addresses.safe4337ModuleAddress,
+        paymentToken: zeroAddress,
+        payment: BigInt.zero,
+        paymentReceiver: zeroAddress,
+      );
     }
 
     final multiSendCallData = encodeMultiSendWithOperations(multiSendCalls);
@@ -1087,6 +1123,21 @@ String _concatSignatures(List<_SignatureEntry> signatures) {
 ///   attestersThreshold: 1,
 /// );
 /// ```
+///
+/// ## Safe Protocol Kit compatibility
+///
+/// To produce a CREATE2 address that matches Safe Protocol Kit / relay-kit
+/// derivation, set `useMultiSendForSetup: false`. This only affects the
+/// counterfactual address when there is exactly one setup transaction
+/// (the default configuration with no WebAuthn owners and no ERC-7579 modules).
+///
+/// ```dart
+/// final account = createSafeSmartAccount(
+///   owners: [PrivateKeyOwner('0x...')],
+///   chainId: BigInt.from(1),
+///   useMultiSendForSetup: false,
+/// );
+/// ```
 SafeSmartAccount createSafeSmartAccount({
   required List<AccountOwner> owners,
   BigInt? threshold,
@@ -1105,6 +1156,7 @@ SafeSmartAccount createSafeSmartAccount({
   List<Safe7579ModuleInit> hooks = const [],
   List<EthereumAddress> attesters = const [],
   int attestersThreshold = 0,
+  bool useMultiSendForSetup = true,
 }) =>
     SafeSmartAccount(
       SafeSmartAccountConfig(
@@ -1124,5 +1176,6 @@ SafeSmartAccount createSafeSmartAccount({
         hooks: hooks,
         attesters: attesters,
         attestersThreshold: attestersThreshold,
+        useMultiSendForSetup: useMultiSendForSetup,
       ),
     );
