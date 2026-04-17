@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-17
+
+### Added
+- **`useMultiSendForSetup` option on SafeSmartAccount** — new opt-in, default `true` preserves existing CREATE2 addresses. When set to `false` and there is exactly one setup transaction, `Safe.setup` is called directly instead of being wrapped through MultiSend, producing addresses compatible with Safe Protocol Kit / relay-kit address derivation. Port of [permissionless.js@0.3.5](https://github.com/pimlicolabs/permissionless.js/releases/tag/permissionless%400.3.5). Has no effect in ERC-7579 mode or when a WebAuthn owner is present.
+
 ## [0.1.2] - 2025-12-18
 
 ### Changed

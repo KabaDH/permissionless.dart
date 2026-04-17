@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [0.3.0] - 2026-04-17
+
+### Added
+
+- **`useMultiSendForSetup` option** on `SafeSmartAccount` / `createSafeSmartAccount` — port of the same option from [permissionless.js@0.3.5](https://github.com/pimlicolabs/permissionless.js/releases/tag/permissionless%400.3.5).
+  - Default `true` preserves the existing MultiSend-wrapped setup — no changes to counterfactual addresses for existing users.
+  - When `false` and there is exactly one setup transaction (the default `enableModules` call, no WebAuthn owners, no ERC-7579 modules), `Safe.setup` is called directly with that call's `to`/`data` instead of being wrapped through MultiSend.
+  - Set `useMultiSendForSetup: false` to produce CREATE2 addresses compatible with Safe Protocol Kit / relay-kit address derivation.
+  - The flag has no effect in ERC-7579 mode (the launchpad path is independent) or when a WebAuthn owner is present (extra setup calls force MultiSend).
+
+
+
 ## [0.2.0] - 2026-02-20
 
 ### Added
@@ -246,3 +259,4 @@ Initial release of permissionless.dart - a Dart implementation of permissionless
 - `eip7702_kernel_example.dart` - EIP-7702 Kernel account delegation
 - `erc20_paymaster_example.dart` - ERC-20 gas payment
 - `erc7579_modules_example.dart` - Module installation and management
+
