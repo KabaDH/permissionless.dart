@@ -1,0 +1,141 @@
+name: Main
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  changesets:
+    name: Changesets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Detect pending changesets
+        id: detect
+        shell: bash
+        run: |
+          if compgen -G '.changesets/*.md' > /dev/null; then
+            echo "has_changesets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changesets=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Apply version bumps and changelogs
+        if: steps.detect.outputs.has_changesets == 'true'
+        shell: bash
+        run: |
+          make version
+          make changelog
+
+      - name: Create or update version PR
+        if: steps.detect.outputs.has_changesets == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: version-packages
+          base: main
+          title: 'chore: version packages'
+          commit-message: 'chore: version packages'
+          body: |
+            This PR was opened by the `changesets` job. It consumes all pending
+            entries under `.changesets/*.md`, applies version bumps to
+            `packages/permissionless/pubspec.yaml` and
+            `packages/permissionless_passkeys/pubspec.yaml`, and regenerates the
+            per-package `CHANGELOG.md`. Merging this PR will trigger the
+            `release` job to publish the bumped packages to pub.dev.
+          delete-branch: true
+
+  release:
+    name: Release
+    needs: changesets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: release
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Detect version-PR merge
+        id: gate
+        shell: bash
+        run: |
+          DIFF=$(git diff --name-status HEAD~1 HEAD -- .changesets/ || true)
+          ADDED=$(printf '%s\n' "$DIFF" | awk '$1=="A" && $2 ~ /^\.changesets\/.*\.md$/' | wc -l | tr -d ' ')
+          DELETED=$(printf '%s\n' "$DIFF" | awk '$1=="D" && $2 ~ /^\.changesets\/.*\.md$/' | wc -l | tr -d ' ')
+          if [ "$DELETED" -gt 0 ] && [ "$ADDED" -eq 0 ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Detect permissionless version bump
+        id: bump_core
+        if: steps.gate.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          CUR=$(awk '/^version:/{print $2; exit}' packages/permissionless/pubspec.yaml)
+          PREV=$(git show HEAD~1:packages/permissionless/pubspec.yaml | awk '/^version:/{print $2; exit}')
+          if [ "$CUR" != "$PREV" ]; then
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Detect permissionless_passkeys version bump
+        id: bump_pk
+        if: steps.gate.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          CUR=$(awk '/^version:/{print $2; exit}' packages/permissionless_passkeys/pubspec.yaml)
+          PREV=$(git show HEAD~1:packages/permissionless_passkeys/pubspec.yaml | awk '/^version:/{print $2; exit}')
+          if [ "$CUR" != "$PREV" ]; then
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Dart
+        if: steps.gate.outputs.should_release == 'true'
+        uses: dart-lang/setup-dart@v1
+
+      - name: Install workspace dependencies
+        if: steps.gate.outputs.should_release == 'true'
+        shell: bash
+        run: dart pub get
+
+      - name: Publish permissionless to pub.dev
+        if: steps.gate.outputs.should_release == 'true' && steps.bump_core.outputs.bumped == 'true'
+        run: dart pub publish --force
+        working-directory: packages/permissionless
+
+      - name: Publish permissionless_passkeys to pub.dev
+        if: steps.gate.outputs.should_release == 'true' && steps.bump_pk.outputs.bumped == 'true'
+        run: dart pub publish --force
+        working-directory: packages/permissionless_passkeys

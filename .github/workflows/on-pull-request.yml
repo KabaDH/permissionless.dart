@@ -1,0 +1,39 @@
+name: Pull request
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify
+    uses: ./.github/workflows/verify.yml
+    permissions:
+      contents: write
+
+  publish-dry-run:
+    name: Publish dry run (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - permissionless
+          - permissionless_passkeys
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v6
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: dart pub publish --dry-run
+        run: dart pub publish --dry-run
+        working-directory: packages/${{ matrix.package }}
