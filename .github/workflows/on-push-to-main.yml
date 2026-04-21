@@ -6,13 +6,13 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
+  # Release-safety invariant: NEVER cancel an in-flight main-branch run.
+  # Cancelling mid-tag-push would leave pubspec version bumps on main with no
+  # matching release tag, producing a silent half-release.
   cancel-in-progress: false
 
 permissions:
   contents: read
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   changesets:
@@ -35,6 +35,7 @@ jobs:
         id: detect
         shell: bash
         run: |
+          set -euo pipefail
           if compgen -G '.changesets/*.md' > /dev/null; then
             echo "has_changesets=true" >> "$GITHUB_OUTPUT"
           else
@@ -45,10 +46,12 @@ jobs:
         if: steps.detect.outputs.has_changesets == 'true'
         shell: bash
         run: |
+          set -euo pipefail
           make version
           make changelog
 
       - name: Create or update version PR
+        id: cpr
         if: steps.detect.outputs.has_changesets == 'true'
         uses: peter-evans/create-pull-request@v8
         with:
@@ -67,6 +70,20 @@ jobs:
             triggers the matching `publish-*.yml` workflow to publish to pub.dev.
           delete-branch: true
 
+      - name: Verify version PR was created or updated
+        if: steps.detect.outputs.has_changesets == 'true'
+        shell: bash
+        env:
+          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
+          PR_OP: ${{ steps.cpr.outputs.pull-request-operation }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "::error::create-pull-request produced no PR number (operation: ${PR_OP:-none}). Changesets exist but no version PR was opened — check permissions and branch protection."
+            exit 1
+          fi
+          echo "Version PR #${PR_NUMBER} ${PR_OP}"
+
   # Tag the release after a version-packages PR merges. The actual pub.dev
   # publish is handled by dedicated tag-triggered workflows
   # (.github/workflows/publish-*.yml) which use pub.dev's recommended
@@ -82,13 +99,24 @@ jobs:
       - name: Clone repository
         uses: actions/checkout@v6
         with:
-          fetch-depth: 2
+          # Full history: the version-PR merge may be a merge commit with
+          # multiple parents, and we need to resolve HEAD~1 reliably.
+          fetch-depth: 0
 
+      # Gate: was this main-branch push the merge of a version-packages PR?
+      # Heuristic: a version-PR merge deletes `.changesets/*.md` without adding
+      # new ones. Any other push (normal dev merge, hotfix, or a changeset-
+      # authoring commit) will add and/or not-delete, and must not release.
       - name: Detect version-PR merge
         id: gate
         shell: bash
         run: |
-          DIFF=$(git diff --name-status HEAD~1 HEAD -- .changesets/ || true)
+          set -euo pipefail
+          if ! git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            echo "::error::HEAD~1 unavailable — cannot determine version-PR merge"
+            exit 1
+          fi
+          DIFF=$(git diff --name-status HEAD~1 HEAD -- .changesets/)
           ADDED=$(printf '%s\n' "$DIFF" | awk '$1=="A" && $2 ~ /^\.changesets\/.*\.md$/' | wc -l | tr -d ' ')
           DELETED=$(printf '%s\n' "$DIFF" | awk '$1=="D" && $2 ~ /^\.changesets\/.*\.md$/' | wc -l | tr -d ' ')
           if [ "$DELETED" -gt 0 ] && [ "$ADDED" -eq 0 ]; then
@@ -102,10 +130,20 @@ jobs:
         if: steps.gate.outputs.should_release == 'true'
         shell: bash
         run: |
+          set -euo pipefail
           CUR=$(awk '/^version:/{print $2; exit}' packages/permissionless/pubspec.yaml)
           PREV=$(git show HEAD~1:packages/permissionless/pubspec.yaml | awk '/^version:/{print $2; exit}')
+          if [ -z "$CUR" ]; then
+            echo "::error::failed to parse current version from packages/permissionless/pubspec.yaml"
+            exit 1
+          fi
+          if [ -z "$PREV" ]; then
+            echo "::error::failed to parse previous version from packages/permissionless/pubspec.yaml at HEAD~1"
+            exit 1
+          fi
           if [ "$CUR" != "$PREV" ]; then
             echo "bumped=true" >> "$GITHUB_OUTPUT"
+            echo "version=$CUR" >> "$GITHUB_OUTPUT"
           else
             echo "bumped=false" >> "$GITHUB_OUTPUT"
           fi
@@ -115,10 +153,20 @@ jobs:
         if: steps.gate.outputs.should_release == 'true'
         shell: bash
         run: |
+          set -euo pipefail
           CUR=$(awk '/^version:/{print $2; exit}' packages/permissionless_passkeys/pubspec.yaml)
           PREV=$(git show HEAD~1:packages/permissionless_passkeys/pubspec.yaml | awk '/^version:/{print $2; exit}')
+          if [ -z "$CUR" ]; then
+            echo "::error::failed to parse current version from packages/permissionless_passkeys/pubspec.yaml"
+            exit 1
+          fi
+          if [ -z "$PREV" ]; then
+            echo "::error::failed to parse previous version from packages/permissionless_passkeys/pubspec.yaml at HEAD~1"
+            exit 1
+          fi
           if [ "$CUR" != "$PREV" ]; then
             echo "bumped=true" >> "$GITHUB_OUTPUT"
+            echo "version=$CUR" >> "$GITHUB_OUTPUT"
           else
             echo "bumped=false" >> "$GITHUB_OUTPUT"
           fi
@@ -127,34 +175,53 @@ jobs:
         if: steps.gate.outputs.should_release == 'true'
         shell: bash
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Ensure local ref DB has remote tags so the "tag exists" check is
+          # accurate (actions/checkout by default does not fetch tags).
+          git fetch --tags --force origin
 
       - name: Tag permissionless release
         if: steps.gate.outputs.should_release == 'true' && steps.bump_core.outputs.bumped == 'true'
+        env:
+          VERSION: ${{ steps.bump_core.outputs.version }}
         shell: bash
         run: |
-          CUR=$(awk '/^version:/{print $2; exit}' packages/permissionless/pubspec.yaml)
-          TAG="permissionless-v${CUR}"
+          set -euo pipefail
+          TAG="permissionless-v${VERSION}"
+          HEAD_SHA=$(git rev-parse HEAD)
           if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-            echo "Tag ${TAG} already exists on remote — skipping creation"
+            EXISTING=$(git rev-list -n1 "refs/tags/${TAG}")
+            if [ "$EXISTING" != "$HEAD_SHA" ]; then
+              echo "::error::Tag ${TAG} already exists but points at ${EXISTING}, not HEAD ${HEAD_SHA}. Refusing to overwrite — resolve the stale tag manually."
+              exit 1
+            fi
+            echo "Tag ${TAG} already at HEAD — skipping tag creation"
           else
-            git tag -a "${TAG}" -m "Release permissionless v${CUR}"
+            git tag -a "${TAG}" -m "Release permissionless v${VERSION}"
             git push origin "${TAG}"
             echo "Created and pushed tag ${TAG}"
           fi
 
       - name: Tag permissionless_passkeys release
         if: steps.gate.outputs.should_release == 'true' && steps.bump_pk.outputs.bumped == 'true'
+        env:
+          VERSION: ${{ steps.bump_pk.outputs.version }}
         shell: bash
         run: |
-          CUR=$(awk '/^version:/{print $2; exit}' packages/permissionless_passkeys/pubspec.yaml)
-          TAG="permissionless_passkeys-v${CUR}"
+          set -euo pipefail
+          TAG="permissionless_passkeys-v${VERSION}"
+          HEAD_SHA=$(git rev-parse HEAD)
           if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-            echo "Tag ${TAG} already exists on remote — skipping creation"
+            EXISTING=$(git rev-list -n1 "refs/tags/${TAG}")
+            if [ "$EXISTING" != "$HEAD_SHA" ]; then
+              echo "::error::Tag ${TAG} already exists but points at ${EXISTING}, not HEAD ${HEAD_SHA}. Refusing to overwrite — resolve the stale tag manually."
+              exit 1
+            fi
+            echo "Tag ${TAG} already at HEAD — skipping tag creation"
           else
-            git tag -a "${TAG}" -m "Release permissionless_passkeys v${CUR}"
+            git tag -a "${TAG}" -m "Release permissionless_passkeys v${VERSION}"
             git push origin "${TAG}"
             echo "Created and pushed tag ${TAG}"
           fi
-

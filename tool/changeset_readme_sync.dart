@@ -37,6 +37,17 @@ void main(List<String> args) {
 }
 
 _Mode _parseMode(List<String> args) {
+  // Reject unknown flags so a typo like `--wirte` does not silently fall
+  // through to the default write mode and mutate files unexpectedly.
+  const known = {'--write', '--check'};
+  for (final a in args) {
+    if (!known.contains(a)) {
+      stderr.writeln(
+        'error: unknown argument "$a" (expected --write or --check)',
+      );
+      exit(2);
+    }
+  }
   final hasWrite = args.contains('--write');
   final hasCheck = args.contains('--check');
   if (hasWrite && hasCheck) {
@@ -62,8 +73,11 @@ int _run(_Mode mode) {
   for (final path in _defaultReadmes) {
     final file = File(path);
     if (!file.existsSync()) {
-      stderr.writeln('warning: README not found: $path');
-      continue;
+      // Hard-fail: a missing README means the sync gate silently does nothing
+      // for that package, which defeats the --check mode used as a CI gate.
+      // If a README is genuinely removed, update _defaultReadmes.
+      stderr.writeln('error: README not found: $path');
+      return 1;
     }
     final original = file.readAsStringSync();
     final updated = rewriteReadme(original, versions);
@@ -83,7 +97,8 @@ int _run(_Mode mode) {
       stderr
         ..writeln('')
         ..writeln(
-            'README version references are out of sync with pubspec.yaml.')
+          'README version references are out of sync with pubspec.yaml.',
+        )
         ..writeln('Run: dart run tool/changeset_readme_sync.dart --write');
       return 1;
     }

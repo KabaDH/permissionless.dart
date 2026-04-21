@@ -2,6 +2,9 @@ name: Publish permissionless_passkeys
 
 on:
   push:
+    # GitHub tag filters are globs, not regex: `.` is a literal dot, and the
+    # trailing `*` admits pre-release / build-metadata suffixes like
+    # `-pre.1`, `-rc.2`, or `+hotfix` so those still trigger publishing.
     tags:
       - 'permissionless_passkeys-v[0-9]+.[0-9]+.[0-9]+*'
 
