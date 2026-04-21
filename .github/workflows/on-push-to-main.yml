@@ -24,7 +24,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Clone repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           fetch-depth: 0
 
@@ -53,7 +53,7 @@ jobs:
       - name: Create or update version PR
         id: cpr
         if: steps.detect.outputs.has_changesets == 'true'
-        uses: peter-evans/create-pull-request@v8
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8.1.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: version-packages
@@ -97,7 +97,7 @@ jobs:
       contents: write  # required to push tags
     steps:
       - name: Clone repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           # Full history: the version-PR merge may be a merge commit with
           # multiple parents, and we need to resolve HEAD~1 reliably.
