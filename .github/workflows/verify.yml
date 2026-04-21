@@ -15,35 +15,21 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: write
     steps:
       - name: Clone repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-        with:
-          # Check out the PR branch directly (not the merge commit) so
-          # git-auto-commit-action can push format fixes back to it.
-          # Falls back to github.ref for workflow_dispatch / push triggers.
-          ref: ${{ github.head_ref || github.ref }}
 
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
 
-      - name: Format
-        run: dart format .
+      - name: Format check
+        run: dart format --set-exit-if-changed .
 
       - name: Analyze
         run: dart analyze
 
       - name: Check README versions match pubspec.yaml
         run: make check-readme
-
-      - name: Commit format fixes
-        uses: stefanzweifel/git-auto-commit-action@04702edda442b2e678b25b537cec683a1493fcb9  # v7.1.0
-        with:
-          commit_message: 'chore: format'
-          commit_user_name: 'github-actions[bot]'
-          commit_user_email: 'github-actions[bot]@users.noreply.github.com'
 
   test:
     name: Test
