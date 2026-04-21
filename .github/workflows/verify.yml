@@ -35,6 +35,9 @@ jobs:
       - name: Analyze
         run: dart analyze
 
+      - name: Check README versions match pubspec.yaml
+        run: make check-readme
+
       - name: Commit format fixes
         uses: stefanzweifel/git-auto-commit-action@v7
         with:
