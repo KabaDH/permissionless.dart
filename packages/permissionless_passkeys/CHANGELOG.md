@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-04-21
+
+### Changed
+
+- Bumped `permissionless` dependency constraint to `^0.3.0` (was `^0.2.0`).
+- Bumped `web3dart` dependency constraint to `^3.0.2` (was `^3.0.1`).
+
 ## [0.1.0] - 2026-02-20
 
 Initial release of permissionless_passkeys - WebAuthn/Passkeys support for permissionless.dart
