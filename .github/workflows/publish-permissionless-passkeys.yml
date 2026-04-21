@@ -7,6 +7,12 @@ on:
     # `-pre.1`, `-rc.2`, or `+hotfix` so those still trigger publishing.
     tags:
       - 'permissionless_passkeys-v[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run dart pub publish --dry-run without actually publishing'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -19,9 +25,25 @@ concurrency:
 
 jobs:
   publish:
+    if: github.event_name == 'push'
     permissions:
       id-token: write  # required for OIDC trusted publishing
     uses: dart-lang/setup-dart/.github/workflows/publish.yml@65eb853c7ba17dde3be364c3d2858773e7144260  # v1.7.2
     with:
       environment: release
       working-directory: packages/permissionless_passkeys
+
+  dry-run:
+    if: github.event_name == 'workflow_dispatch' && inputs.dry_run == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Dry-run publish
+        run: dart pub publish --dry-run
+        working-directory: packages/permissionless_passkeys
