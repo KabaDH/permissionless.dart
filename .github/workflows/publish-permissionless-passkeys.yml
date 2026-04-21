@@ -8,11 +8,20 @@ on:
     tags:
       - 'permissionless_passkeys-v[0-9]+.[0-9]+.[0-9]+*'
 
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel an in-flight pub.dev publish — a half-run release would be
+  # worse than a delayed one. Serialize releases by group instead.
+  group: publish-permissionless-passkeys
+  cancel-in-progress: false
+
 jobs:
   publish:
     permissions:
       id-token: write  # required for OIDC trusted publishing
-    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@65eb853c7ba17dde3be364c3d2858773e7144260  # v1.7.2
     with:
       environment: release
       working-directory: packages/permissionless_passkeys
