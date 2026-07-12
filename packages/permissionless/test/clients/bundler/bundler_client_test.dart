@@ -458,6 +458,94 @@ void main() {
       expect(results[1], equals('result_method2'));
       expect(results[2], equals('result_method3'));
     });
+
+    test('throws BundlerRpcError when error is a string (non-standard RPC)',
+        () async {
+      final mockClient = MockClient((request) async {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'id': body['id'],
+            'error': 'rate limited',
+          }),
+          200,
+        );
+      });
+
+      final rpcClient = JsonRpcClient(
+        url: Uri.parse('http://localhost:3000'),
+        httpClient: mockClient,
+      );
+
+      expect(
+        () => rpcClient.call('eth_call', [
+          {'data': '0x'},
+          'latest',
+        ]),
+        throwsA(
+          isA<BundlerRpcError>()
+              .having((e) => e.message, 'message', 'rate limited')
+              .having((e) => e.code, 'code', -32000),
+        ),
+      );
+    });
+
+    test('parses standard object error with string code', () async {
+      final mockClient = MockClient((request) async {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'id': body['id'],
+            'error': {
+              'code': '-32602',
+              'message': 'Invalid params',
+              'data': 'extra',
+            },
+          }),
+          200,
+        );
+      });
+
+      final rpcClient = JsonRpcClient(
+        url: Uri.parse('http://localhost:3000'),
+        httpClient: mockClient,
+      );
+
+      expect(
+        () => rpcClient.call('eth_call'),
+        throwsA(
+          isA<BundlerRpcError>()
+              .having((e) => e.code, 'code', -32602)
+              .having((e) => e.message, 'message', 'Invalid params')
+              .having((e) => e.data, 'data', 'extra'),
+        ),
+      );
+    });
+
+    test('throws BundlerRpcError when response body is not a JSON object',
+        () async {
+      final mockClient = MockClient(
+        (request) async => http.Response(jsonEncode('oops'), 200),
+      );
+
+      final rpcClient = JsonRpcClient(
+        url: Uri.parse('http://localhost:3000'),
+        httpClient: mockClient,
+      );
+
+      expect(
+        () => rpcClient.call('eth_chainId'),
+        throwsA(
+          isA<BundlerRpcError>().having(
+            (e) => e.code,
+            'code',
+            -32700,
+          ),
+        ),
+      );
+    });
   });
 
   group('UserOperationGasEstimate', () {
@@ -487,14 +575,43 @@ void main() {
   });
 
   group('BundlerRpcError', () {
-    test('extracts AA error code', () {
+    test('extracts AA error code from data', () {
       const error = BundlerRpcError(
         code: -32602,
-        message: 'AA21 didn\'t pay prefund',
+        message: 'execution reverted',
         data: 'AA21 didn\'t pay prefund',
       );
 
       expect(error.aaErrorCode, equals('AA21'));
+    });
+
+    test('extracts AA error code from message when data is null', () {
+      const error = BundlerRpcError(
+        code: -32000,
+        message: "AA23 reverted: UserOperation reverted during simulation",
+      );
+
+      expect(error.aaErrorCode, equals('AA23'));
+      expect(error.aaErrorDescription, equals('Reverted (or OOG)'));
+    });
+
+    test('extracts lowercase aa codes (case-insensitive)', () {
+      const error = BundlerRpcError(
+        code: -32000,
+        message: 'aa21 didn\'t pay prefund',
+      );
+
+      expect(error.aaErrorCode, equals('AA21'));
+    });
+
+    test('prefers first AA code found in message then data', () {
+      const error = BundlerRpcError(
+        code: -32000,
+        message: 'bundler rejected: aa25 invalid nonce',
+        data: 'AA21 also present',
+      );
+
+      expect(error.aaErrorCode, equals('AA25'));
     });
 
     test('returns null for non-AA errors', () {
@@ -504,6 +621,18 @@ void main() {
       );
 
       expect(error.aaErrorCode, isNull);
+      expect(error.aaErrorDescription, isNull);
+    });
+
+    test('toString includes AA code description when known', () {
+      const error = BundlerRpcError(
+        code: -32000,
+        message: 'failed',
+        data: 'AA21',
+      );
+
+      expect(error.toString(), contains('AA21'));
+      expect(error.toString(), contains("Didn't pay prefund"));
     });
   });
 }
