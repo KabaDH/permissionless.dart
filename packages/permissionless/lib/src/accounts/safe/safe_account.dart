@@ -161,7 +161,7 @@ class SafeSmartAccountConfig {
 }
 
 /// A Safe smart account implementation for ERC-4337.
-class SafeSmartAccount implements SmartAccount {
+class SafeSmartAccount implements SmartAccount, SmartAccountV06 {
   /// Creates a Safe smart account from the given configuration.
   ///
   /// Prefer using [createSafeSmartAccount] factory function instead
@@ -794,19 +794,45 @@ class SafeSmartAccount implements SmartAccount {
     return Hex.concat([validAfter, validUntil, concatenatedSigs]);
   }
 
-  /// Signs a UserOperation.
+  /// Signs a UserOperation for EntryPoint v0.7.
   ///
-  /// For EntryPoint v0.7, creates an EIP-712 signature over the SafeOp.
+  /// Creates an EIP-712 signature over the v0.7 SafeOp typehash.
+  /// For v0.6 accounts, use [signUserOperationV06] instead.
   @override
   Future<String> signUserOperation(UserOperationV07 userOp) async {
+    if (_config.entryPointVersion == EntryPointVersion.v06) {
+      throw UnsupportedError(
+        'Safe account configured for EntryPoint v0.6. '
+        'Use signUserOperationV06 instead.',
+      );
+    }
+
     // Use the sender from the UserOp rather than computing locally
     // This ensures the signature matches the actual account address
-    final accountAddress = userOp.sender;
+    final safeOpHash = _computeSafeOpHashV07(userOp, userOp.sender);
+    return _signSafeOpHash(safeOpHash);
+  }
 
-    // Compute SafeOp hash for EIP-712 signing
-    final safeOpHash = _computeSafeOpHash(userOp, accountAddress);
+  /// Signs a UserOperation for EntryPoint v0.6.
+  ///
+  /// Creates an EIP-712 signature over the v0.6 SafeOp typehash
+  /// (uint256 gas fields, callGasLimit before verificationGasLimit),
+  /// matching permissionless.js `EIP712_SAFE_OPERATION_TYPE_V06`.
+  @override
+  Future<String> signUserOperationV06(UserOperationV06 userOp) async {
+    if (_config.entryPointVersion != EntryPointVersion.v06) {
+      throw UnsupportedError(
+        'signUserOperationV06 requires EntryPoint v0.6. '
+        'This account is configured for ${_config.entryPointVersion.name}.',
+      );
+    }
 
-    // Build signature entries for each owner
+    final safeOpHash = _computeSafeOpHashV06(userOp, userOp.sender);
+    return _signSafeOpHash(safeOpHash);
+  }
+
+  /// Signs a SafeOp hash with all owners and packs validAfter/validUntil.
+  Future<String> _signSafeOpHash(String safeOpHash) async {
     final signatureEntries = <_SignatureEntry>[];
 
     // Sort owners by their "effective" address (shared signer for WebAuthn)
@@ -857,30 +883,89 @@ class SafeSmartAccount implements SmartAccount {
     return Hex.concat([validAfter, validUntil, concatenatedSigs]);
   }
 
-  /// Signs a personal message (EIP-191).
+  /// Signs a personal message (EIP-191) via SafeMessage EIP-712 wrapper.
   ///
-  /// The message is hashed and signed by all owners (sorted by address).
-  /// Returns a combined signature suitable for EIP-1271 verification.
+  /// Matches permissionless.js: wrap as `SafeMessage(bytes)`, each ECDSA
+  /// owner eth_signs the digest (v adjusted +4 → 31/32), then concatenate.
+  /// In ERC-7579 mode the result is prefixed with 20 zero bytes.
   @override
   Future<String> signMessage(String message) async {
-    final messageHash = hashMessage(message);
-    return _signHash(messageHash);
+    _assertCanSignMessage();
+    final accountAddress = await getAddress();
+    final safeMessage =
+        _buildSafeMessageTypedData(hashMessage(message), accountAddress);
+    final safeMessageHash = hashTypedData(safeMessage);
+    return _signSafeMessage(
+      safeMessageHash: safeMessageHash,
+      safeMessageTypedData: safeMessage,
+      ethSign: true,
+    );
   }
 
-  /// Signs EIP-712 typed data.
+  /// Signs EIP-712 typed data via SafeMessage EIP-712 wrapper.
   ///
-  /// The typed data is hashed and signed by all owners (sorted by address).
-  /// Returns a combined signature suitable for EIP-1271 verification.
+  /// Matches permissionless.js: wrap as `SafeMessage(bytes)` over the
+  /// typed-data hash; ECDSA owners sign the SafeMessage typed data
+  /// (v stays 27/28). In ERC-7579 mode the result is prefixed with 20 zero bytes.
   @override
   Future<String> signTypedData(TypedData typedData) async {
-    final hash = hashTypedData(typedData);
-    return _signHash(hash);
+    _assertCanSignMessage();
+    final accountAddress = await getAddress();
+    final safeMessage =
+        _buildSafeMessageTypedData(hashTypedData(typedData), accountAddress);
+    final safeMessageHash = hashTypedData(safeMessage);
+    return _signSafeMessage(
+      safeMessageHash: safeMessageHash,
+      safeMessageTypedData: safeMessage,
+      ethSign: false,
+    );
   }
 
-  /// Signs a hash with all owners and returns the combined signature.
-  Future<String> _signHash(String hash) async {
-    // Sign with each owner (sorted by "address" for consistency)
-    // For WebAuthn owners, use the shared signer address for sorting
+  /// Guards matching permissionless.js Safe signMessage/signTypedData.
+  void _assertCanSignMessage() {
+    if (_config.owners.length < _config.threshold.toInt()) {
+      throw StateError(
+        'Owners length mismatch, currently not supported',
+      );
+    }
+    if (isErc7579Enabled && _config.version == SafeVersion.v1_5_0) {
+      throw StateError('Safe 7579 & version 1.5.0 are not compatible');
+    }
+  }
+
+  /// Builds the SafeMessage EIP-712 typed data for [innerHash].
+  ///
+  /// [accountAddress] is the Safe account (not the 4337 module).
+  TypedData _buildSafeMessageTypedData(
+    String innerHash,
+    EthereumAddress accountAddress,
+  ) =>
+      TypedData(
+        domain: TypedDataDomain(
+          chainId: _config.chainId,
+          verifyingContract: accountAddress,
+        ),
+        types: {
+          'SafeMessage': [
+            const TypedDataField(name: 'message', type: 'bytes'),
+          ],
+        },
+        primaryType: 'SafeMessage',
+        message: {'message': innerHash},
+      );
+
+  /// Signs a SafeMessage hash with all owners and concatenates signatures.
+  ///
+  /// When [ethSign] is true (signMessage path), ECDSA owners use personal_sign
+  /// and V is adjusted +4. When false (signTypedData path), they sign the
+  /// SafeMessage typed data directly and V stays 27/28.
+  Future<String> _signSafeMessage({
+    required String safeMessageHash,
+    required TypedData safeMessageTypedData,
+    required bool ethSign,
+  }) async {
+    final signatureEntries = <_SignatureEntry>[];
+
     final sortedOwners = List<AccountOwner>.from(_config.owners)
       ..sort((a, b) {
         final aAddr = isWebAuthnAccount(a)
@@ -892,44 +977,104 @@ class SafeSmartAccount implements SmartAccount {
         return aAddr.compareTo(bAddr);
       });
 
-    final signatures = <String>[];
     for (final owner in sortedOwners) {
       if (isWebAuthnAccount(owner)) {
-        // WebAuthn P256 signing with Safe encoding
         final webAuthnOwner = owner as WebAuthnAccountOwner;
-        final sigData = await webAuthnOwner.signP256(hash);
+        final sigData = await webAuthnOwner.signP256(safeMessageHash);
         final encoded = encodeSafeWebAuthnSignature(sigData);
-        signatures.add(Hex.strip0x(encoded));
+        signatureEntries.add(
+          _SignatureEntry(
+            signer: _addresses.webAuthnSharedSignerAddress!,
+            data: encoded,
+            isDynamic: true,
+          ),
+        );
       } else {
-        // ECDSA signing - Safe signs the raw hash directly
-        final sig = await owner.signRawHash(hash);
-        signatures.add(Hex.strip0x(sig));
+        final String sig;
+        if (ethSign) {
+          // eth_sign: personal_sign of the 32-byte SafeMessage hash, then V+4
+          final raw = await owner.signPersonalMessage(safeMessageHash);
+          sig = _adjustVInSignature(raw, ethSign: true);
+        } else {
+          // eth_signTypedData: sign SafeMessage typed data raw, normalize V
+          final raw = await owner.signTypedData(safeMessageTypedData);
+          sig = _adjustVInSignature(raw, ethSign: false);
+        }
+        signatureEntries.add(
+          _SignatureEntry(
+            signer: owner.address,
+            data: sig,
+            isDynamic: false,
+          ),
+        );
       }
     }
 
-    return Hex.concat(signatures);
+    final signatureBytes = _concatSignatures(signatureEntries);
+
+    // ERC-7579 mode prefixes with zero address (permissionless.js)
+    if (isErc7579Enabled) {
+      return Hex.concat([
+        Hex.fromBytes(Uint8List(20)),
+        Hex.strip0x(signatureBytes),
+      ]);
+    }
+
+    return signatureBytes;
   }
 
-  /// Computes the SafeOp hash for EIP-712 signing.
-  String _computeSafeOpHash(
+  /// Adjusts the V byte of a 65-byte ECDSA signature for Safe.
+  ///
+  /// - eth_sign: normalize to 27/28 then add 4 → 31/32
+  /// - eth_signTypedData: normalize to 27/28 only
+  String _adjustVInSignature(String signature, {required bool ethSign}) {
+    final hex = Hex.strip0x(signature);
+    if (hex.length != 130) {
+      throw ArgumentError(
+          'Expected 65-byte ECDSA signature, got ${hex.length ~/ 2} bytes');
+    }
+    var v = int.parse(hex.substring(128, 130), radix: 16);
+    if (v != 0 && v != 1 && v != 27 && v != 28) {
+      throw ArgumentError('Invalid signature V value: $v');
+    }
+    if (v < 27) {
+      v += 27;
+    }
+    if (ethSign) {
+      v += 4;
+    }
+    return '0x${hex.substring(0, 128)}${v.toRadixString(16).padLeft(2, '0')}';
+  }
+
+  /// Computes the SafeOp EIP-712 hash for EntryPoint v0.7.
+  String _computeSafeOpHashV07(
     UserOperationV07 userOp,
     EthereumAddress accountAddress,
   ) {
-    // IMPORTANT: Domain separator uses the Safe4337Module address as verifyingContract
-    // (not the Safe account address!) because Safe's fallback uses 'call' not 'delegatecall',
-    // so 'this' in the module's domainSeparator() refers to the module's address.
     final domainSeparator = _computeDomainSeparator();
+    final safeOpStructHash =
+        _computeSafeOpStructHashV07(userOp, accountAddress);
+    return _eip712Hash(domainSeparator, safeOpStructHash);
+  }
 
-    // SafeOp struct hash
-    final safeOpStructHash = _computeSafeOpStructHash(userOp, accountAddress);
+  /// Computes the SafeOp EIP-712 hash for EntryPoint v0.6.
+  String _computeSafeOpHashV06(
+    UserOperationV06 userOp,
+    EthereumAddress accountAddress,
+  ) {
+    final domainSeparator = _computeDomainSeparator();
+    final safeOpStructHash =
+        _computeSafeOpStructHashV06(userOp, accountAddress);
+    return _eip712Hash(domainSeparator, safeOpStructHash);
+  }
 
-    // EIP-712 hash: keccak256("\x19\x01" ++ domainSeparator ++ structHash)
+  /// EIP-712 hash: keccak256("\x19\x01" ‖ domainSeparator ‖ structHash).
+  String _eip712Hash(String domainSeparator, String structHash) {
     final preImage = Hex.concat([
       '0x1901',
       Hex.strip0x(domainSeparator),
-      Hex.strip0x(safeOpStructHash),
+      Hex.strip0x(structHash),
     ]);
-
     return Hex.fromBytes(keccak256(Hex.decode(preImage)));
   }
 
@@ -958,12 +1103,12 @@ class SafeSmartAccount implements SmartAccount {
     return Hex.fromBytes(keccak256(Hex.decode(encoded)));
   }
 
-  /// Computes the SafeOp struct hash for EIP-712.
-  String _computeSafeOpStructHash(
+  /// Computes the SafeOp struct hash for EntryPoint v0.7 EIP-712.
+  String _computeSafeOpStructHashV07(
     UserOperationV07 userOp,
     EthereumAddress accountAddress,
   ) {
-    // SafeOp type hash for v0.7
+    // SafeOp type hash for v0.7 (uint128 gas fields; verification before call)
     const safeOpTypeString =
         'SafeOp(address safe,uint256 nonce,bytes initCode,bytes callData,uint128 verificationGasLimit,uint128 callGasLimit,uint256 preVerificationGas,uint128 maxPriorityFeePerGas,uint128 maxFeePerGas,bytes paymasterAndData,uint48 validAfter,uint48 validUntil,address entryPoint)';
 
@@ -1013,7 +1158,46 @@ class SafeSmartAccount implements SmartAccount {
       Hex.fromBytes(paymasterAndDataHash),
       AbiEncoder.encodeUint48(0), // validAfter
       AbiEncoder.encodeUint48(0), // validUntil
-      AbiEncoder.encodeAddress(EntryPointAddresses.v07),
+      AbiEncoder.encodeAddress(entryPoint),
+    ]);
+
+    return Hex.fromBytes(keccak256(Hex.decode(encoded)));
+  }
+
+  /// Computes the SafeOp struct hash for EntryPoint v0.6 EIP-712.
+  ///
+  /// Matches permissionless.js `EIP712_SAFE_OPERATION_TYPE_V06`: uint256 gas
+  /// fields with callGasLimit before verificationGasLimit, and maxFeePerGas
+  /// before maxPriorityFeePerGas.
+  String _computeSafeOpStructHashV06(
+    UserOperationV06 userOp,
+    EthereumAddress accountAddress,
+  ) {
+    const safeOpTypeString =
+        'SafeOp(address safe,uint256 nonce,bytes initCode,bytes callData,uint256 callGasLimit,uint256 verificationGasLimit,uint256 preVerificationGas,uint256 maxFeePerGas,uint256 maxPriorityFeePerGas,bytes paymasterAndData,uint48 validAfter,uint48 validUntil,address entryPoint)';
+
+    final safeOpTypeHash =
+        keccak256(Uint8List.fromList(safeOpTypeString.codeUnits));
+
+    final initCodeHash = keccak256(Hex.decode(userOp.initCode));
+    final callDataHash = keccak256(Hex.decode(userOp.callData));
+    final paymasterAndDataHash = keccak256(Hex.decode(userOp.paymasterAndData));
+
+    final encoded = Hex.concat([
+      Hex.fromBytes(safeOpTypeHash),
+      AbiEncoder.encodeAddress(accountAddress),
+      AbiEncoder.encodeUint256(userOp.nonce),
+      Hex.fromBytes(initCodeHash),
+      Hex.fromBytes(callDataHash),
+      AbiEncoder.encodeUint256(userOp.callGasLimit),
+      AbiEncoder.encodeUint256(userOp.verificationGasLimit),
+      AbiEncoder.encodeUint256(userOp.preVerificationGas),
+      AbiEncoder.encodeUint256(userOp.maxFeePerGas),
+      AbiEncoder.encodeUint256(userOp.maxPriorityFeePerGas),
+      Hex.fromBytes(paymasterAndDataHash),
+      AbiEncoder.encodeUint48(0), // validAfter
+      AbiEncoder.encodeUint48(0), // validUntil
+      AbiEncoder.encodeAddress(entryPoint),
     ]);
 
     return Hex.fromBytes(keccak256(Hex.decode(encoded)));
