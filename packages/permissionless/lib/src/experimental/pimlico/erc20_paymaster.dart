@@ -200,6 +200,11 @@ Future<Erc20PaymasterResult> prepareUserOperationForErc20Paymaster({
     nonce: nonce,
     paymasterContext: paymasterContext,
     stateOverride: stateOverride,
+    // The op is re-signed by the paymaster at step 9 over the final calldata,
+    // so the prepare-time pm_getPaymasterData result would be discarded.
+    // Stub data + gas estimation are enough here (permissionless.js parity:
+    // its prepare step substitutes stub data for the data step).
+    skipFinalPaymasterData: true,
   );
   final initialUserOp = prepared.userOp;
   final authorization = prepared.authorization;

@@ -315,6 +315,52 @@ void main() {
         expect(userOp.paymasterData, equals('0x1234567890abcdef'));
       });
 
+      test(
+          'skipFinalPaymasterData: only stub is requested, '
+          'stub data retained on the op', () async {
+        final bundler = createBundlerClient(
+          url: 'http://localhost:3000/rpc',
+          entryPoint: EntryPointAddresses.v07,
+          httpClient: createBundlerMock(),
+        );
+        final paymaster = createPaymasterClient(
+          url: 'http://localhost:3001/rpc',
+          httpClient: createPaymasterMock(),
+        );
+
+        final client = SmartAccountClient(
+          account: account,
+          bundler: bundler,
+          paymaster: paymaster,
+          publicClient: createPublicClientMock(),
+        );
+
+        final prepared = await client.prepareUserOperationWithAuth(
+          calls: [
+            Call(
+              to: EthereumAddress.fromHex(
+                '0x1234567890123456789012345678901234567890',
+              ),
+              value: BigInt.zero,
+            ),
+          ],
+          maxFeePerGas: BigInt.from(1000000000),
+          maxPriorityFeePerGas: BigInt.from(1000000000),
+          skipFinalPaymasterData: true,
+        );
+
+        // No paid pm_getPaymasterData: stub only.
+        expect(paymasterRequests.length, equals(1));
+        expect(
+          paymasterRequests[0]['method'],
+          equals('pm_getPaymasterStubData'),
+        );
+
+        // Stub paymaster data retained; gas still estimated.
+        expect(prepared.userOp.paymasterData, equals('0xabcdef0123456789'));
+        expect(prepared.userOp.callGasLimit, greaterThan(BigInt.zero));
+      });
+
       test('excludes factory data when account is deployed', () async {
         final bundler = createBundlerClient(
           url: 'http://localhost:3000/rpc',

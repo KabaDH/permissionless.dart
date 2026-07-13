@@ -176,6 +176,12 @@ class SmartAccountClient {
   /// estimation. This is useful for ERC-20 paymaster scenarios where you need
   /// to simulate having sufficient token balance before the account is funded.
   ///
+  /// [skipFinalPaymasterData] skips the trailing `pm_getPaymasterData` call:
+  /// the returned op keeps the stub paymaster data (gas fields are still
+  /// estimated). Use it when the caller re-requests final paymaster data
+  /// itself over modified calldata (e.g. the ERC-20 paymaster helper) —
+  /// this avoids a paid paymaster round-trip whose result would be discarded.
+  ///
   /// Example:
   /// ```dart
   /// final prepared = await client.prepareUserOperationWithAuth(
@@ -199,6 +205,7 @@ class SmartAccountClient {
     PaymasterContext? paymasterContext,
     EthereumAddress? sender,
     List<StateOverride>? stateOverride,
+    bool skipFinalPaymasterData = false,
   }) async {
     sender ??= await account.getAddress();
 
@@ -302,8 +309,14 @@ class SmartAccountClient {
     }
     userOp = _applyGasEstimate(userOp, gasEstimate);
 
-    // Get final paymaster data if using paymaster and not final
-    if (paymaster != null && stubData != null && !stubData.isFinal) {
+    // Get final paymaster data if using paymaster and not final.
+    // Skipped when the caller re-requests final data itself (see doc above) —
+    // mirrors permissionless.js, where the prepare step substitutes stub data
+    // and the single real pm_getPaymasterData happens at the end of the helper.
+    if (paymaster != null &&
+        stubData != null &&
+        !stubData.isFinal &&
+        !skipFinalPaymasterData) {
       final finalData = await paymaster!.getPaymasterData(
         userOp: userOp,
         entryPoint: account.entryPoint,

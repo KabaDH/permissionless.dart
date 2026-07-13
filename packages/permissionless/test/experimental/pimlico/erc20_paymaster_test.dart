@@ -175,12 +175,20 @@ void main() {
       // Zero allowance → approval must be injected.
       expect(result.approvalInjected, isTrue);
 
-      // Every paymaster request — including the final pm_getPaymasterData
-      // issued by the helper itself (step 9) — must carry eip7702Auth.
+      // Paid-RPC economy (permissionless.js parity): exactly one stub call
+      // during prepare and exactly ONE real pm_getPaymasterData — the final
+      // one over the final calldata (step 9). The prepare-time data call is
+      // skipped via skipFinalPaymasterData.
       final dataRequests = paymasterRequests
           .where((r) => r['method'] == 'pm_getPaymasterData')
           .toList();
-      expect(dataRequests, isNotEmpty);
+      expect(dataRequests.length, equals(1));
+      expect(
+        paymasterRequests
+            .where((r) => r['method'] == 'pm_getPaymasterStubData')
+            .length,
+        equals(1),
+      );
       for (final req in paymasterRequests) {
         final userOpJson =
             (req['params'] as List<dynamic>)[0] as Map<String, dynamic>;
@@ -246,6 +254,14 @@ void main() {
       // Paymaster data applied to the final op.
       expect(result.userOperation.paymaster, isNotNull);
       expect(result.userOperation.paymasterData, isNotNull);
+
+      // Exactly one paid pm_getPaymasterData for the whole flow (step 9).
+      expect(
+        paymasterRequests
+            .where((r) => r['method'] == 'pm_getPaymasterData')
+            .length,
+        equals(1),
+      );
     });
 
     test('throws ArgumentError when token is not supported', () async {
