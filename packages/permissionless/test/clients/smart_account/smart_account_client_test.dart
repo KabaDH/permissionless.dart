@@ -558,6 +558,173 @@ void main() {
         expect(userOp.maxFeePerGas, equals(BigInt.from(2000)));
         expect(userOp.maxPriorityFeePerGas, equals(BigInt.from(200)));
       });
+
+      test(
+          'skipFinalPaymasterData: only stub is requested, '
+          'stub data retained on the op', () async {
+        final bundler = createBundlerClient(
+          url: 'http://localhost:3000/rpc',
+          entryPoint: EntryPointAddresses.v07,
+          httpClient: createBundlerMock(),
+        );
+        final paymaster = createPaymasterClient(
+          url: 'http://localhost:3001/rpc',
+          httpClient: createPaymasterMock(),
+        );
+
+        final client = SmartAccountClient(
+          account: account,
+          bundler: bundler,
+          paymaster: paymaster,
+          publicClient: createPublicClientMock(),
+        );
+
+        final prepared = await client.prepareUserOperationWithAuth(
+          calls: [
+            Call(
+              to: EthereumAddress.fromHex(
+                '0x1234567890123456789012345678901234567890',
+              ),
+              value: BigInt.zero,
+            ),
+          ],
+          maxFeePerGas: BigInt.from(1000000000),
+          maxPriorityFeePerGas: BigInt.from(1000000000),
+          skipFinalPaymasterData: true,
+        );
+
+        // No paid pm_getPaymasterData: stub only.
+        expect(paymasterRequests.length, equals(1));
+        expect(
+          paymasterRequests[0]['method'],
+          equals('pm_getPaymasterStubData'),
+        );
+
+        // Stub paymaster data retained; gas still estimated.
+        expect(prepared.userOp.paymasterData, equals('0xabcdef0123456789'));
+        expect(prepared.userOp.callGasLimit, greaterThan(BigInt.zero));
+      });
+    });
+
+    group('EIP-7702 paymaster forwarding', () {
+      // Public client mock for a not-yet-delegated 7702 EOA:
+      // - eth_getCode → '0x' (not deployed → needs authorization)
+      // - eth_getTransactionCount → '0x0' (EOA nonce for the authorization)
+      // - eth_call → 0 (account nonce via EntryPoint.getNonce)
+      PublicClient create7702PublicClientMock() {
+        final mock = MockClient((request) async {
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          final method = body['method'] as String;
+          final result = switch (method) {
+            'eth_getCode' => '0x',
+            'eth_getTransactionCount' => '0x0',
+            'eth_call' =>
+              '0x0000000000000000000000000000000000000000000000000000000000000000',
+            _ => null,
+          };
+          return http.Response(
+            jsonEncode({'jsonrpc': '2.0', 'id': body['id'], 'result': result}),
+            200,
+          );
+        });
+        return PublicClient(
+          rpcClient: JsonRpcClient(
+            url: Uri.parse('http://localhost:8545'),
+            httpClient: mock,
+          ),
+        );
+      }
+
+      SmartAccountClient create7702Client({PaymasterClient? paymaster}) {
+        final bundler = createBundlerClient(
+          url: 'http://localhost:3000/rpc',
+          entryPoint: EntryPointAddresses.v08,
+          httpClient: createBundlerMock(),
+        );
+        final publicClient = create7702PublicClientMock();
+        final eip7702Account = createEip7702SimpleSmartAccount(
+          owner: PrivateKeyEip7702Owner(testPrivateKey),
+          chainId: BigInt.from(11155111),
+          publicClient: publicClient,
+        );
+        return SmartAccountClient(
+          account: eip7702Account,
+          bundler: bundler,
+          paymaster: paymaster,
+          publicClient: publicClient,
+        );
+      }
+
+      final call = Call(
+        to: EthereumAddress.fromHex(
+          '0x1234567890123456789012345678901234567890',
+        ),
+        value: BigInt.zero,
+      );
+
+      test('paymaster requests carry eip7702Auth for a first 7702 op',
+          () async {
+        final paymaster = createPaymasterClient(
+          url: 'http://localhost:3001/rpc',
+          httpClient: createPaymasterMock(),
+        );
+        final client = create7702Client(paymaster: paymaster);
+
+        final prepared = await client.prepareUserOperationWithAuth(
+          calls: [call],
+          maxFeePerGas: BigInt.from(1000000000),
+          maxPriorityFeePerGas: BigInt.from(1000000000),
+        );
+
+        expect(prepared.needsAuthorization, isTrue);
+
+        // Both pm_getPaymasterStubData and pm_getPaymasterData must carry
+        // eip7702Auth — the paymaster signs its data over the same op the
+        // account signs and the bundler receives (viem parity).
+        expect(paymasterRequests, hasLength(2));
+        for (final req in paymasterRequests) {
+          final userOpJson =
+              (req['params'] as List<dynamic>)[0] as Map<String, dynamic>;
+          expect(
+            userOpJson.containsKey('eip7702Auth'),
+            isTrue,
+            reason: '${req['method']} must forward eip7702Auth',
+          );
+          // The EIP-7702 factory marker stays in its short wire form.
+          expect(userOpJson['factory'], equals('0x7702'));
+        }
+      });
+
+      test('non-7702 paymaster requests carry NO eip7702Auth', () async {
+        final paymaster = createPaymasterClient(
+          url: 'http://localhost:3001/rpc',
+          httpClient: createPaymasterMock(),
+        );
+        final client = SmartAccountClient(
+          account: account,
+          bundler: createBundlerClient(
+            url: 'http://localhost:3000/rpc',
+            entryPoint: EntryPointAddresses.v07,
+            httpClient: createBundlerMock(),
+          ),
+          paymaster: paymaster,
+          publicClient: createPublicClientMock(),
+        );
+
+        final prepared = await client.prepareUserOperationWithAuth(
+          calls: [call],
+          maxFeePerGas: BigInt.from(1000000000),
+          maxPriorityFeePerGas: BigInt.from(1000000000),
+        );
+
+        expect(prepared.needsAuthorization, isFalse);
+        expect(paymasterRequests, isNotEmpty);
+        for (final req in paymasterRequests) {
+          final userOpJson =
+              (req['params'] as List<dynamic>)[0] as Map<String, dynamic>;
+          expect(userOpJson.containsKey('eip7702Auth'), isFalse);
+        }
+      });
     });
 
     group('signUserOperation', () {

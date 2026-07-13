@@ -254,6 +254,12 @@ class SmartAccountClient {
   /// estimation. This is useful for ERC-20 paymaster scenarios where you need
   /// to simulate having sufficient token balance before the account is funded.
   ///
+  /// [skipFinalPaymasterData] skips the trailing `pm_getPaymasterData` call:
+  /// the returned op keeps the stub paymaster data (gas fields are still
+  /// estimated). Use it when the caller re-requests final paymaster data
+  /// itself over modified calldata (e.g. the ERC-20 paymaster helper) —
+  /// this avoids a paid paymaster round-trip whose result would be discarded.
+  ///
   /// Example:
   /// ```dart
   /// final prepared = await client.prepareUserOperationWithAuth(
@@ -284,6 +290,7 @@ class SmartAccountClient {
     PaymasterContext? paymasterContext,
     EthereumAddress? sender,
     List<StateOverride>? stateOverride,
+    bool skipFinalPaymasterData = false,
   }) async {
     if (calls == null && callData == null) {
       throw ArgumentError(
@@ -369,7 +376,9 @@ class SmartAccountClient {
       signature: signature ?? account.getStubSignature(),
     );
 
-    // Apply paymaster stub data if using paymaster
+    // Apply paymaster stub data if using paymaster.
+    // The EIP-7702 authorization (when present) is forwarded so the paymaster
+    // sees the same `eip7702Auth` context as the bundler (viem parity).
     PaymasterStubData? stubData;
     if (paymaster != null) {
       stubData = await paymaster!.getPaymasterStubData(
@@ -377,6 +386,7 @@ class SmartAccountClient {
         entryPoint: account.entryPoint,
         chainId: account.chainId,
         context: resolvedContext,
+        authorization: authorization,
       );
       userOp = userOp.withPaymasterStub(stubData);
     }
@@ -414,13 +424,20 @@ class SmartAccountClient {
       );
     }
 
-    // Get final paymaster data if using paymaster and not final
-    if (paymaster != null && stubData != null && !stubData.isFinal) {
+    // Get final paymaster data if using paymaster and not final.
+    // Skipped when the caller re-requests final data itself (see doc above) —
+    // mirrors permissionless.js, where the prepare step substitutes stub data
+    // and the single real pm_getPaymasterData happens at the end of the helper.
+    if (paymaster != null &&
+        stubData != null &&
+        !stubData.isFinal &&
+        !skipFinalPaymasterData) {
       final finalData = await paymaster!.getPaymasterData(
         userOp: userOp,
         entryPoint: account.entryPoint,
         chainId: account.chainId,
         context: resolvedContext,
+        authorization: authorization,
       );
       userOp = userOp.withPaymasterData(finalData);
     }

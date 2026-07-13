@@ -1,6 +1,7 @@
 import 'package:http/http.dart' as http;
 
 import '../../types/address.dart';
+import '../../types/eip7702.dart';
 import '../../types/hex.dart';
 import '../../types/user_operation.dart';
 import '../bundler/rpc_client.dart';
@@ -51,16 +52,22 @@ class PaymasterClient {
   ///
   /// If `isFinal` is true in the response, the stub data can be
   /// used directly for submission without calling `getPaymasterData`.
+  ///
+  /// For EIP-7702 first-time delegation, pass [authorization] so the signed
+  /// authorization is forwarded to the paymaster as the `eip7702Auth` field
+  /// (viem parity: the paymaster signs its data over the same op the account
+  /// signs and the bundler receives).
   Future<PaymasterStubData> getPaymasterStubData({
     required UserOperation userOp,
     required EthereumAddress entryPoint,
     required BigInt chainId,
     PaymasterContext? context,
+    Eip7702Authorization? authorization,
   }) async {
     // viem always sends 4 positional params (context may be null) and ensures
     // gas fields default to 0x0 when missing.
     final params = <dynamic>[
-      _userOpJsonForPaymaster(userOp),
+      _userOpJsonForPaymaster(userOp, authorization),
       entryPoint.hex,
       '0x${chainId.toRadixString(16)}',
       context?.toJson(),
@@ -74,16 +81,20 @@ class PaymasterClient {
   ///
   /// Call this after gas estimation with the fully populated UserOperation.
   /// The returned data contains the paymaster signature.
+  ///
+  /// For EIP-7702 first-time delegation, pass [authorization] so the signed
+  /// authorization is forwarded to the paymaster as the `eip7702Auth` field.
   Future<PaymasterData> getPaymasterData({
     required UserOperation userOp,
     required EthereumAddress entryPoint,
     required BigInt chainId,
     PaymasterContext? context,
+    Eip7702Authorization? authorization,
   }) async {
     // viem always sends 4 positional params (context may be null) and ensures
     // gas fields default to 0x0 when missing.
     final params = <dynamic>[
-      _userOpJsonForPaymaster(userOp),
+      _userOpJsonForPaymaster(userOp, authorization),
       entryPoint.hex,
       '0x${chainId.toRadixString(16)}',
       context?.toJson(),
@@ -95,8 +106,18 @@ class PaymasterClient {
 
   /// Builds paymaster request body matching viem's formatUserOperationRequest
   /// defaults: gas fields fall back to `0x0` when absent.
-  Map<String, dynamic> _userOpJsonForPaymaster(UserOperation userOp) {
+  ///
+  /// When [authorization] is provided (EIP-7702 first op), it is added as the
+  /// separate `eip7702Auth` field — matching viem, which forwards the
+  /// authorization to `pm_getPaymaster*` alongside the op fields.
+  Map<String, dynamic> _userOpJsonForPaymaster(
+    UserOperation userOp,
+    Eip7702Authorization? authorization,
+  ) {
     final json = userOp.toJson();
+    if (authorization != null) {
+      json['eip7702Auth'] = authorization.toRpcFormat();
+    }
     json['callGasLimit'] = json['callGasLimit'] ?? '0x0';
     json['verificationGasLimit'] = json['verificationGasLimit'] ?? '0x0';
     json['preVerificationGas'] = json['preVerificationGas'] ?? '0x0';
