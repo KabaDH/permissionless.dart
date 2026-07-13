@@ -6,6 +6,7 @@
 /// **Warning:** This is experimental and the API may change.
 library;
 
+import '../../clients/paymaster/paymaster_client.dart';
 import '../../clients/paymaster/types.dart';
 import '../../clients/pimlico/pimlico_client.dart';
 import '../../clients/pimlico/types.dart';
@@ -278,20 +279,13 @@ Future<Erc20PaymasterResult> prepareUserOperationForErc20Paymaster({
     );
   }
 
+  // Send the FULL prepared op with only callData replaced (permissionless.js
+  // parity: it mutates userOperation.callData and spreads the whole op).
+  // The stub paymaster fields and the estimated paymaster gas limits must be
+  // present — Pimlico's ERC-20 mode rejects the request without them
+  // ("paymasterValidationGasLimit is required for erc20 mode").
   final finalPaymasterData = await paymaster.getPaymasterData(
-    userOp: UserOperationV07(
-      sender: initialUserOp.sender,
-      nonce: initialUserOp.nonce,
-      factory: initialUserOp.factory,
-      factoryData: initialUserOp.factoryData,
-      callData: finalCallData,
-      callGasLimit: initialUserOp.callGasLimit,
-      verificationGasLimit: initialUserOp.verificationGasLimit,
-      preVerificationGas: initialUserOp.preVerificationGas,
-      maxFeePerGas: initialUserOp.maxFeePerGas,
-      maxPriorityFeePerGas: initialUserOp.maxPriorityFeePerGas,
-      signature: initialUserOp.signature,
-    ),
+    userOp: initialUserOp.copyWith(callData: finalCallData),
     entryPoint: smartAccountClient.account.entryPoint,
     chainId: smartAccountClient.account.chainId,
     context: paymasterContext,
@@ -300,25 +294,12 @@ Future<Erc20PaymasterResult> prepareUserOperationForErc20Paymaster({
     authorization: authorization,
   );
 
-  // 10. Build final UserOperation
-  final finalUserOp = UserOperationV07(
-    sender: initialUserOp.sender,
-    nonce: initialUserOp.nonce,
-    factory: initialUserOp.factory,
-    factoryData: initialUserOp.factoryData,
-    callData: finalCallData,
-    callGasLimit: initialUserOp.callGasLimit,
-    verificationGasLimit: initialUserOp.verificationGasLimit,
-    preVerificationGas: initialUserOp.preVerificationGas,
-    maxFeePerGas: initialUserOp.maxFeePerGas,
-    maxPriorityFeePerGas: initialUserOp.maxPriorityFeePerGas,
-    paymaster: finalPaymasterData.paymaster,
-    paymasterVerificationGasLimit:
-        finalPaymasterData.paymasterVerificationGasLimit,
-    paymasterPostOpGasLimit: finalPaymasterData.paymasterPostOpGasLimit,
-    paymasterData: finalPaymasterData.paymasterData,
-    signature: smartAccountClient.account.getStubSignature(),
-  );
+  // 10. Build final UserOperation (permissionless.js parity:
+  // `{...userOperation, ...paymasterData}` — response fields override, gas
+  // limits estimated earlier survive if the response omits them).
+  final finalUserOp = initialUserOp
+      .copyWith(callData: finalCallData)
+      .withPaymasterData(finalPaymasterData);
 
   return Erc20PaymasterResult(
     userOperation: finalUserOp,

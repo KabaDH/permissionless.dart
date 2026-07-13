@@ -189,6 +189,17 @@ void main() {
             .length,
         equals(1),
       );
+
+      // The final pm_getPaymasterData must carry the FULL prepared op —
+      // stub paymaster fields and paymaster gas limits included. Pimlico's
+      // ERC-20 mode rejects the request without the limits
+      // ("paymasterValidationGasLimit is required for erc20 mode").
+      final dataOpJson =
+          (dataRequests.single['params'] as List<dynamic>)[0]
+              as Map<String, dynamic>;
+      expect(dataOpJson['paymasterVerificationGasLimit'], isNotNull);
+      expect(dataOpJson['paymasterPostOpGasLimit'], isNotNull);
+      expect(dataOpJson['paymaster'], isNotNull);
       for (final req in paymasterRequests) {
         final userOpJson =
             (req['params'] as List<dynamic>)[0] as Map<String, dynamic>;
