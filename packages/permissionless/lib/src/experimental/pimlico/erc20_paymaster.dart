@@ -12,6 +12,7 @@ import '../../clients/pimlico/types.dart';
 import '../../clients/public/public_client.dart';
 import '../../clients/smart_account/smart_account_client.dart';
 import '../../types/address.dart';
+import '../../types/eip7702.dart';
 import '../../types/user_operation.dart';
 import '../../utils/erc20.dart';
 
@@ -52,6 +53,7 @@ class Erc20PaymasterResult {
     required this.tokenQuote,
     required this.maxCostInToken,
     required this.approvalInjected,
+    this.authorization,
   });
 
   /// The prepared UserOperation ready for signing.
@@ -65,6 +67,18 @@ class Erc20PaymasterResult {
 
   /// Whether an approval call was injected.
   final bool approvalInjected;
+
+  /// EIP-7702 authorization for first-time delegation, if required.
+  ///
+  /// Non-null only for EIP-7702 accounts whose delegation is not yet active.
+  /// Submit the signed op via
+  /// `SmartAccountClient.sendPreparedUserOperationWithAuth` (or
+  /// `BundlerClient.sendUserOperationWithAuthorization`) so the bundler
+  /// receives it as the `eip7702Auth` field.
+  final Eip7702Authorization? authorization;
+
+  /// Whether this operation requires EIP-7702 authorization on submission.
+  bool get needsAuthorization => authorization != null;
 }
 
 /// Prepares a UserOperation for ERC-20 paymaster gas payment.
@@ -91,9 +105,16 @@ class Erc20PaymasterResult {
 ///   maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
 /// );
 ///
-/// // Sign and send the prepared operation
+/// // Sign and send the prepared operation.
+/// // For EIP-7702 first-time delegation, result.authorization is non-null
+/// // and must be submitted alongside the op.
 /// final signedOp = await client.signUserOperation(result.userOperation);
-/// final hash = await client.sendPreparedUserOperation(signedOp);
+/// final hash = result.needsAuthorization
+///     ? await client.sendPreparedUserOperationWithAuth(
+///         signedOp,
+///         result.authorization,
+///       )
+///     : await client.sendPreparedUserOperation(signedOp);
 ///
 /// print('Max cost: ${result.maxCostInToken} tokens');
 /// print('Approval injected: ${result.approvalInjected}');
@@ -165,10 +186,14 @@ Future<Erc20PaymasterResult> prepareUserOperationForErc20Paymaster({
     );
   }
 
-  // 4. Prepare initial UserOperation with dummy approval
+  // 4. Prepare initial UserOperation with dummy approval.
+  //
+  // Auth-aware variant: for an EIP-7702 account with inactive delegation this
+  // also produces the signed authorization, which must accompany every
+  // paymaster/bundler request (as `eip7702Auth`) and the final submission.
   final paymasterContext = PaymasterContext(token: token);
 
-  final initialUserOp = await smartAccountClient.prepareUserOperation(
+  final prepared = await smartAccountClient.prepareUserOperationWithAuth(
     calls: callsWithDummyApproval,
     maxFeePerGas: maxFeePerGas,
     maxPriorityFeePerGas: maxPriorityFeePerGas,
@@ -176,6 +201,8 @@ Future<Erc20PaymasterResult> prepareUserOperationForErc20Paymaster({
     paymasterContext: paymasterContext,
     stateOverride: stateOverride,
   );
+  final initialUserOp = prepared.userOp;
+  final authorization = prepared.authorization;
 
   // 5. Calculate maximum cost in tokens
   final userOperationMaxGas = initialUserOp.preVerificationGas +
@@ -263,6 +290,9 @@ Future<Erc20PaymasterResult> prepareUserOperationForErc20Paymaster({
     entryPoint: smartAccountClient.account.entryPoint,
     chainId: smartAccountClient.account.chainId,
     context: paymasterContext,
+    // EIP-7702 first op: the paymaster must sign over the same op the account
+    // signs/sends, so it needs the same `eip7702Auth` context as stub/estimate.
+    authorization: authorization,
   );
 
   // 10. Build final UserOperation
@@ -290,6 +320,7 @@ Future<Erc20PaymasterResult> prepareUserOperationForErc20Paymaster({
     tokenQuote: quote,
     maxCostInToken: maxCostInToken,
     approvalInjected: approvalInjected,
+    authorization: authorization,
   );
 }
 
