@@ -183,7 +183,8 @@ void main(List<String> args) async {
   // SmartAccountClient handles all the EIP-7702 complexity:
   // - Detects if authorization is needed (delegation not active)
   // - Creates authorization with correct EOA nonce
-  // - Uses 0x7702 factory marker for first-time setup
+  // - Keeps factory empty (7702 signals via the eip7702Auth field, not
+  //   a factory)
   // - Calls authorization-aware gas estimation
   // - Applies paymaster if configured
 

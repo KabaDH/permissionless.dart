@@ -498,10 +498,18 @@ final result = await prepareUserOperationForErc20Paymaster(
 print('Max cost: ${result.maxCostInToken} tokens');
 print('Approval injected: ${result.approvalInjected}');
 
-// Sign and send
+// Sign and send. For an EIP-7702 account whose delegation is not yet
+// active, result.authorization is non-null and the delegation is installed
+// by this same operation — one code path covers both cases.
 final signedOp = await client.signUserOperation(result.userOperation);
-final hash = await client.sendPreparedUserOperation(signedOp);
+final hash = await client.sendPreparedUserOperationWithAuth(
+  signedOp,
+  result.authorization,
+);
 ```
+
+See `example/erc20_paymaster_example.dart` for a complete gasless ERC-20
+transfer (the sender needs no ETH at all).
 
 ## ERC-20 State Overrides
 
