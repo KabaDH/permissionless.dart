@@ -62,8 +62,9 @@ class BundlerClient {
 
   /// Submits a UserOperation with EIP-7702 authorization.
   ///
-  /// This is used for EIP-7702 accounts where the authorization
-  /// must be included in the UserOperation to enable code delegation.
+  /// This is used for EIP-7702 accounts where the authorization must be sent
+  /// alongside the UserOperation (as the separate `eip7702Auth` wire field,
+  /// not part of the userOp struct/hash) to enable code delegation.
   ///
   /// [userOp] is the UserOperation to submit.
   /// [authorizationList] contains signed EIP-7702 authorizations.
@@ -75,13 +76,12 @@ class BundlerClient {
     UserOperation userOp,
     List<Eip7702Authorization> authorizationList,
   ) async {
-    // Per Pimlico API, eip7702Auth is a single authorization object
+    // Per Pimlico API, eip7702Auth is a single authorization object.
+    // EIP-7702 ops carry no factory — the authorization is the sole 7702 signal.
     final userOpJson = userOp.toJson();
     if (authorizationList.isNotEmpty) {
       userOpJson['eip7702Auth'] = authorizationList.first.toRpcFormat();
     }
-    // Handle EIP-7702 factory marker - bundler expects '0x7702' not the padded form
-    _normalizeEip7702Factory(userOpJson);
 
     final result = await rpcClient.call(
       'eth_sendUserOperation',
@@ -115,8 +115,9 @@ class BundlerClient {
 
   /// Estimates gas limits for a UserOperation with EIP-7702 authorization.
   ///
-  /// Similar to [estimateUserOperationGas] but includes the authorization
-  /// inside the UserOperation for accurate gas estimation of EIP-7702 accounts.
+  /// Similar to [estimateUserOperationGas] but sends the authorization as the
+  /// separate `eip7702Auth` wire field (not part of the userOp struct) for
+  /// accurate gas estimation of EIP-7702 accounts.
   ///
   /// **Note**: Requires a bundler that supports EntryPoint v0.8 and EIP-7702.
   Future<UserOperationGasEstimate> estimateUserOperationGasWithAuthorization(
@@ -124,13 +125,12 @@ class BundlerClient {
     List<Eip7702Authorization> authorizationList, {
     Map<String, dynamic>? stateOverride,
   }) async {
-    // Per Pimlico API, eip7702Auth is a single authorization object
+    // Per Pimlico API, eip7702Auth is a single authorization object.
+    // EIP-7702 ops carry no factory — the authorization is the sole 7702 signal.
     final userOpJson = userOp.toJson();
     if (authorizationList.isNotEmpty) {
       userOpJson['eip7702Auth'] = authorizationList.first.toRpcFormat();
     }
-    // Handle EIP-7702 factory marker - bundler expects '0x7702' not the padded form
-    _normalizeEip7702Factory(userOpJson);
 
     final params = <dynamic>[userOpJson, entryPoint.hex];
     if (stateOverride != null) {
@@ -142,17 +142,6 @@ class BundlerClient {
       params,
     );
     return UserOperationGasEstimate.fromJson(result as Map<String, dynamic>);
-  }
-
-  /// Normalizes the factory field for EIP-7702.
-  ///
-  /// The bundler expects '0x7702' (4 bytes) not the padded 20-byte address.
-  void _normalizeEip7702Factory(Map<String, dynamic> userOpJson) {
-    final factory = userOpJson['factory'] as String?;
-    if (factory != null &&
-        factory.toLowerCase() == '0x7702000000000000000000000000000000000000') {
-      userOpJson['factory'] = '0x7702';
-    }
   }
 
   /// Gets a UserOperation by its hash.

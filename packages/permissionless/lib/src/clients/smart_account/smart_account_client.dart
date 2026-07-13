@@ -123,13 +123,6 @@ class SmartAccountClient {
     return (account as Eip7702SmartAccount).getAuthorization(nonce: eoaNonce);
   }
 
-  /// EIP-7702 factory marker address.
-  ///
-  /// Used to signal to the bundler that this UserOperation requires
-  /// EIP-7702 authorization handling.
-  static final _eip7702FactoryMarker =
-      EthereumAddress.fromHex('0x7702000000000000000000000000000000000000');
-
   /// Prepares a UserOperation without signing.
   ///
   /// This builds the UserOperation, applies paymaster stub data (if using),
@@ -229,20 +222,23 @@ class SmartAccountClient {
       );
     }
 
-    // Get factory data if account is not yet deployed
+    // Get factory data if account is not yet deployed.
+    //
+    // EIP-7702 (needsAuth): factory/factoryData MUST stay null. Delegate code is
+    // installed via the authorization, not a factory. The 7702 signal on the
+    // wire is the separate `eip7702Auth` field — added by the bundler from the
+    // authorizationList and by the paymaster (see calls below). This mirrors
+    // viem (getFactoryArgs → {factory: undefined}). Putting a factory marker in
+    // the op corrupts the signed userOpHash initCode → AA24.
+    //
+    // Non-EIP-7702 accounts keep the standard ERC-4337 factory deployment path.
     EthereumAddress? factory;
     String? factoryData;
-    if (!isDeployed) {
-      if (needsAuth) {
-        // EIP-7702: Use marker factory address to signal authorization needed
-        factory = _eip7702FactoryMarker;
-        factoryData = '0x';
-      } else {
-        final data = await account.getFactoryData();
-        if (data != null) {
-          factory = data.factory;
-          factoryData = data.factoryData;
-        }
+    if (!isDeployed && !needsAuth) {
+      final data = await account.getFactoryData();
+      if (data != null) {
+        factory = data.factory;
+        factoryData = data.factoryData;
       }
     }
 
@@ -280,6 +276,7 @@ class SmartAccountClient {
         entryPoint: account.entryPoint,
         chainId: account.chainId,
         context: paymasterContext,
+        authorization: authorization,
       );
       userOp = userOp.withPaymasterStub(stubData);
     }
@@ -312,6 +309,7 @@ class SmartAccountClient {
         entryPoint: account.entryPoint,
         chainId: account.chainId,
         context: paymasterContext,
+        authorization: authorization,
       );
       userOp = userOp.withPaymasterData(finalData);
     }

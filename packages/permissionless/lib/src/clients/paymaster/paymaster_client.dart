@@ -1,6 +1,7 @@
 import 'package:http/http.dart' as http;
 
 import '../../types/address.dart';
+import '../../types/eip7702.dart';
 import '../../types/hex.dart';
 import '../../types/user_operation.dart';
 import '../bundler/rpc_client.dart';
@@ -51,14 +52,19 @@ class PaymasterClient {
   ///
   /// If `isFinal` is true in the response, the stub data can be
   /// used directly for submission without calling `getPaymasterData`.
+  ///
+  /// For EIP-7702 first-time delegation, pass [authorization] so the signed
+  /// authorization is forwarded to the paymaster as the `eip7702Auth` field
+  /// (the paymaster signs its data over the same op the account signs/sends).
   Future<PaymasterStubData> getPaymasterStubData({
     required UserOperation userOp,
     required EthereumAddress entryPoint,
     required BigInt chainId,
     PaymasterContext? context,
+    Eip7702Authorization? authorization,
   }) async {
     final params = <dynamic>[
-      userOp.toJson(),
+      _userOpJson(userOp, authorization),
       entryPoint.hex,
       '0x${chainId.toRadixString(16)}',
       if (context != null) context.toJson(),
@@ -68,18 +74,37 @@ class PaymasterClient {
     return PaymasterStubData.fromJson(result as Map<String, dynamic>);
   }
 
+  /// Serializes [userOp] for a paymaster RPC call.
+  ///
+  /// When [authorization] is provided (EIP-7702 first op), adds the separate
+  /// `eip7702Auth` field — matching viem. No factory marker is used.
+  static Map<String, dynamic> _userOpJson(
+    UserOperation userOp,
+    Eip7702Authorization? authorization,
+  ) {
+    final json = userOp.toJson();
+    if (authorization != null) {
+      json['eip7702Auth'] = authorization.toRpcFormat();
+    }
+    return json;
+  }
+
   /// Gets final paymaster data for UserOperation submission.
   ///
   /// Call this after gas estimation with the fully populated UserOperation.
   /// The returned data contains the paymaster signature.
+  ///
+  /// For EIP-7702 first-time delegation, pass [authorization] so the signed
+  /// authorization is forwarded to the paymaster as the `eip7702Auth` field.
   Future<PaymasterData> getPaymasterData({
     required UserOperation userOp,
     required EthereumAddress entryPoint,
     required BigInt chainId,
     PaymasterContext? context,
+    Eip7702Authorization? authorization,
   }) async {
     final params = <dynamic>[
-      userOp.toJson(),
+      _userOpJson(userOp, authorization),
       entryPoint.hex,
       '0x${chainId.toRadixString(16)}',
       if (context != null) context.toJson(),

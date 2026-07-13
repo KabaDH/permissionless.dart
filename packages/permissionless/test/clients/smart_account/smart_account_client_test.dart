@@ -378,6 +378,128 @@ void main() {
       });
     });
 
+    group('EIP-7702 (Fix A: no factory marker)', () {
+      // Public client mock for a not-yet-delegated 7702 EOA:
+      // - eth_getCode → '0x' (not deployed → needs authorization)
+      // - eth_getTransactionCount → '0x0' (EOA nonce for the authorization)
+      // - eth_call → 0 (account nonce via EntryPoint.getNonce)
+      PublicClient create7702PublicClientMock() {
+        final mock = MockClient((request) async {
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          final method = body['method'] as String;
+          final result = switch (method) {
+            'eth_getCode' => '0x',
+            'eth_getTransactionCount' => '0x0',
+            'eth_call' =>
+              '0x0000000000000000000000000000000000000000000000000000000000000000',
+            _ => null,
+          };
+          return http.Response(
+            jsonEncode({'jsonrpc': '2.0', 'id': body['id'], 'result': result}),
+            200,
+          );
+        });
+        return PublicClient(
+          rpcClient: JsonRpcClient(
+            url: Uri.parse('http://localhost:8545'),
+            httpClient: mock,
+          ),
+        );
+      }
+
+      SmartAccountClient create7702Client({PaymasterClient? paymaster}) {
+        final bundler = createBundlerClient(
+          url: 'http://localhost:3000/rpc',
+          entryPoint: EntryPointAddresses.v08,
+          httpClient: createBundlerMock(),
+        );
+        final publicClient = create7702PublicClientMock();
+        final eip7702Account = createEip7702SimpleSmartAccount(
+          owner: PrivateKeyEip7702Owner(testPrivateKey),
+          chainId: BigInt.from(11155111),
+          publicClient: publicClient,
+        );
+        return SmartAccountClient(
+          account: eip7702Account,
+          bundler: bundler,
+          paymaster: paymaster,
+          publicClient: publicClient,
+        );
+      }
+
+      final call = Call(
+        to: EthereumAddress.fromHex(
+          '0x1234567890123456789012345678901234567890',
+        ),
+        value: BigInt.zero,
+      );
+
+      test('7702 userOp carries NO factory; authorization is produced',
+          () async {
+        final client = create7702Client();
+
+        final prepared = await client.prepareUserOperationWithAuth(
+          calls: [call],
+          maxFeePerGas: BigInt.from(1000000000),
+          maxPriorityFeePerGas: BigInt.from(1000000000),
+        );
+
+        // Fix A: EIP-7702 op must not carry a factory marker (viem parity).
+        expect(prepared.userOp.factory, isNull);
+        expect(prepared.userOp.factoryData, isNull);
+        expect(prepared.needsAuthorization, isTrue);
+      });
+
+      test('bundler estimate request gets eip7702Auth and no factory field',
+          () async {
+        final client = create7702Client();
+
+        await client.prepareUserOperationWithAuth(
+          calls: [call],
+          maxFeePerGas: BigInt.from(1000000000),
+          maxPriorityFeePerGas: BigInt.from(1000000000),
+        );
+
+        final estimateReq = bundlerRequests.firstWhere(
+          (r) => r['method'] == 'eth_estimateUserOperationGas',
+        );
+        final userOpJson =
+            (estimateReq['params'] as List<dynamic>)[0] as Map<String, dynamic>;
+        expect(userOpJson.containsKey('eip7702Auth'), isTrue);
+        expect(userOpJson.containsKey('factory'), isFalse);
+      });
+
+      test('paymaster requests get eip7702Auth and no factory field', () async {
+        final paymaster = createPaymasterClient(
+          url: 'http://localhost:3001/rpc',
+          httpClient: createPaymasterMock(),
+        );
+        final client = create7702Client(paymaster: paymaster);
+
+        await client.prepareUserOperationWithAuth(
+          calls: [call],
+          maxFeePerGas: BigInt.from(1000000000),
+          maxPriorityFeePerGas: BigInt.from(1000000000),
+        );
+
+        expect(paymasterRequests, isNotEmpty);
+        for (final req in paymasterRequests) {
+          final userOpJson =
+              (req['params'] as List<dynamic>)[0] as Map<String, dynamic>;
+          expect(
+            userOpJson.containsKey('eip7702Auth'),
+            isTrue,
+            reason: '${req['method']} must forward eip7702Auth',
+          );
+          expect(
+            userOpJson.containsKey('factory'),
+            isFalse,
+            reason: '${req['method']} must not carry a factory for 7702',
+          );
+        }
+      });
+    });
+
     group('signUserOperation', () {
       test('signs userOp and returns with signature', () async {
         final bundler = createBundlerClient(
