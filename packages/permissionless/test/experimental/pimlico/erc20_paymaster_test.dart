@@ -10,10 +10,12 @@ void main() {
     const testPrivateKey =
         '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 
-    final token =
-        EthereumAddress.fromHex('0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238');
-    final recipient =
-        EthereumAddress.fromHex('0x1234567890123456789012345678901234567890');
+    final token = EthereumAddress.fromHex(
+      '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
+    );
+    final recipient = EthereumAddress.fromHex(
+      '0x1234567890123456789012345678901234567890',
+    );
 
     late List<Map<String, dynamic>> bundlerRequests;
     late List<Map<String, dynamic>> paymasterRequests;
@@ -132,151 +134,150 @@ void main() {
     final call = Call(to: recipient, value: BigInt.zero);
 
     test(
-        'EIP-7702 first op: returns authorization, forwards eip7702Auth '
-        'to every paymaster request incl. the final pm_getPaymasterData',
-        () async {
-      final publicClient = createPublicClientMock();
-      final account = createEip7702SimpleSmartAccount(
-        owner: PrivateKeyEip7702Owner(testPrivateKey),
-        chainId: BigInt.from(11155111),
-        publicClient: publicClient,
-      );
-      final client = SmartAccountClient(
-        account: account,
-        bundler: createBundlerClient(
-          url: 'http://localhost:3000/rpc',
-          entryPoint: EntryPointAddresses.v08,
-          httpClient: createBundlerMock(),
-        ),
-        paymaster: createPaymasterClient(
-          url: 'http://localhost:3001/rpc',
-          httpClient: createPaymasterMock(),
-        ),
-        publicClient: publicClient,
-      );
-
-      final result = await prepareUserOperationForErc20Paymaster(
-        smartAccountClient: client,
-        pimlicoClient: createPimlico(),
-        publicClient: publicClient,
-        token: token,
-        calls: [call],
-        maxFeePerGas: BigInt.from(1000000000),
-        maxPriorityFeePerGas: BigInt.from(1000000000),
-      );
-
-      // The authorization must be surfaced to the caller for submission.
-      expect(result.needsAuthorization, isTrue);
-      expect(result.authorization, isNotNull);
-
-      // First 7702 op carries the EIP-7702 factory marker.
-      expect(
-        isEip7702FactoryMarker(result.userOperation.factory),
-        isTrue,
-      );
-
-      // Zero allowance → approval must be injected.
-      expect(result.approvalInjected, isTrue);
-
-      // Paid-RPC economy (permissionless.js parity): exactly one stub call
-      // during prepare and exactly ONE real pm_getPaymasterData — the final
-      // one over the final calldata (step 9). The prepare-time data call is
-      // skipped via skipFinalPaymasterData.
-      final dataRequests = paymasterRequests
-          .where((r) => r['method'] == 'pm_getPaymasterData')
-          .toList();
-      expect(dataRequests.length, equals(1));
-      expect(
-        paymasterRequests
-            .where((r) => r['method'] == 'pm_getPaymasterStubData')
-            .length,
-        equals(1),
-      );
-
-      // Every paymaster request — including the final pm_getPaymasterData
-      // issued by the helper itself (step 9) — must carry eip7702Auth and
-      // the short factory marker.
-      for (final req in paymasterRequests) {
-        final userOpJson =
-            (req['params'] as List<dynamic>)[0] as Map<String, dynamic>;
-        expect(
-          userOpJson.containsKey('eip7702Auth'),
-          isTrue,
-          reason: '${req['method']} must forward eip7702Auth',
+      'EIP-7702 first op: returns authorization, forwards eip7702Auth '
+      'to every paymaster request incl. the final pm_getPaymasterData',
+      () async {
+        final publicClient = createPublicClientMock();
+        final account = createEip7702SimpleSmartAccount(
+          owner: PrivateKeyEip7702Owner(testPrivateKey),
+          chainId: BigInt.from(11155111),
+          publicClient: publicClient,
         );
-        expect(userOpJson['factory'], equals('0x7702'));
-      }
-
-      // The final pm_getPaymasterData must carry the FULL prepared op —
-      // stub paymaster fields and paymaster gas limits included. Pimlico's
-      // ERC-20 mode rejects the request without the limits
-      // ("paymasterValidationGasLimit is required for erc20 mode").
-      final dataOpJson =
-          (dataRequests.single['params'] as List<dynamic>)[0]
-              as Map<String, dynamic>;
-      expect(dataOpJson['paymasterVerificationGasLimit'], isNotNull);
-      expect(dataOpJson['paymasterPostOpGasLimit'], isNotNull);
-      expect(dataOpJson['paymaster'], isNotNull);
-    });
-
-    test('non-7702 (Safe, deployed): no authorization, no eip7702Auth on wire',
-        () async {
-      final publicClient = createPublicClientMock(isDeployed: true);
-      final account = createSafeSmartAccount(
-        owners: [PrivateKeyOwner(testPrivateKey)],
-        chainId: BigInt.from(11155111),
-        address: recipient,
-      );
-      final client = SmartAccountClient(
-        account: account,
-        bundler: createBundlerClient(
-          url: 'http://localhost:3000/rpc',
-          entryPoint: EntryPointAddresses.v07,
-          httpClient: createBundlerMock(),
-        ),
-        paymaster: createPaymasterClient(
-          url: 'http://localhost:3001/rpc',
-          httpClient: createPaymasterMock(),
-        ),
-        publicClient: publicClient,
-      );
-
-      final result = await prepareUserOperationForErc20Paymaster(
-        smartAccountClient: client,
-        pimlicoClient: createPimlico(),
-        publicClient: publicClient,
-        token: token,
-        calls: [call],
-        maxFeePerGas: BigInt.from(1000000000),
-        maxPriorityFeePerGas: BigInt.from(1000000000),
-      );
-
-      expect(result.needsAuthorization, isFalse);
-      expect(result.authorization, isNull);
-
-      // Non-7702 flow: no eip7702Auth anywhere.
-      for (final req in paymasterRequests) {
-        final userOpJson =
-            (req['params'] as List<dynamic>)[0] as Map<String, dynamic>;
-        expect(
-          userOpJson.containsKey('eip7702Auth'),
-          isFalse,
-          reason: '${req['method']} must not carry eip7702Auth for non-7702',
+        final client = SmartAccountClient(
+          account: account,
+          bundler: createBundlerClient(
+            url: 'http://localhost:3000/rpc',
+            entryPoint: EntryPointAddresses.v08,
+            httpClient: createBundlerMock(),
+          ),
+          paymaster: createPaymasterClient(
+            url: 'http://localhost:3001/rpc',
+            httpClient: createPaymasterMock(),
+          ),
+          publicClient: publicClient,
         );
-      }
 
-      // Paymaster data applied to the final op.
-      expect(result.userOperation.paymaster, isNotNull);
-      expect(result.userOperation.paymasterData, isNotNull);
+        final result = await prepareUserOperationForErc20Paymaster(
+          smartAccountClient: client,
+          pimlicoClient: createPimlico(),
+          publicClient: publicClient,
+          token: token,
+          calls: [call],
+          maxFeePerGas: BigInt.from(1000000000),
+          maxPriorityFeePerGas: BigInt.from(1000000000),
+        );
 
-      // Exactly one paid pm_getPaymasterData for the whole flow (step 9).
-      expect(
-        paymasterRequests
+        // The authorization must be surfaced to the caller for submission.
+        expect(result.needsAuthorization, isTrue);
+        expect(result.authorization, isNotNull);
+
+        // First 7702 op carries the EIP-7702 factory marker.
+        expect(isEip7702FactoryMarker(result.userOperation.factory), isTrue);
+
+        // Zero allowance → approval must be injected.
+        expect(result.approvalInjected, isTrue);
+
+        // Paid-RPC economy (permissionless.js parity): exactly one stub call
+        // during prepare and exactly ONE real pm_getPaymasterData — the final
+        // one over the final calldata (step 9). The prepare-time data call is
+        // skipped via skipFinalPaymasterData.
+        final dataRequests = paymasterRequests
             .where((r) => r['method'] == 'pm_getPaymasterData')
-            .length,
-        equals(1),
-      );
-    });
+            .toList();
+        expect(dataRequests.length, equals(1));
+        expect(
+          paymasterRequests
+              .where((r) => r['method'] == 'pm_getPaymasterStubData')
+              .length,
+          equals(1),
+        );
+
+        // Every paymaster request — including the final pm_getPaymasterData
+        // issued by the helper itself (step 9) — must carry eip7702Auth and
+        // the short factory marker.
+        for (final req in paymasterRequests) {
+          final userOpJson =
+              (req['params'] as List<dynamic>)[0] as Map<String, dynamic>;
+          expect(
+            userOpJson.containsKey('eip7702Auth'),
+            isTrue,
+            reason: '${req['method']} must forward eip7702Auth',
+          );
+          expect(userOpJson['factory'], equals('0x7702'));
+        }
+
+        // The final pm_getPaymasterData must carry the FULL prepared op —
+        // stub paymaster fields and paymaster gas limits included. Pimlico's
+        // ERC-20 mode rejects the request without the limits
+        // ("paymasterValidationGasLimit is required for erc20 mode").
+        final dataOpJson = (dataRequests.single['params'] as List<dynamic>)[0]
+            as Map<String, dynamic>;
+        expect(dataOpJson['paymasterVerificationGasLimit'], isNotNull);
+        expect(dataOpJson['paymasterPostOpGasLimit'], isNotNull);
+        expect(dataOpJson['paymaster'], isNotNull);
+      },
+    );
+
+    test(
+      'non-7702 (Safe, deployed): no authorization, no eip7702Auth on wire',
+      () async {
+        final publicClient = createPublicClientMock(isDeployed: true);
+        final account = createSafeSmartAccount(
+          owners: [PrivateKeyOwner(testPrivateKey)],
+          chainId: BigInt.from(11155111),
+          address: recipient,
+        );
+        final client = SmartAccountClient(
+          account: account,
+          bundler: createBundlerClient(
+            url: 'http://localhost:3000/rpc',
+            entryPoint: EntryPointAddresses.v07,
+            httpClient: createBundlerMock(),
+          ),
+          paymaster: createPaymasterClient(
+            url: 'http://localhost:3001/rpc',
+            httpClient: createPaymasterMock(),
+          ),
+          publicClient: publicClient,
+        );
+
+        final result = await prepareUserOperationForErc20Paymaster(
+          smartAccountClient: client,
+          pimlicoClient: createPimlico(),
+          publicClient: publicClient,
+          token: token,
+          calls: [call],
+          maxFeePerGas: BigInt.from(1000000000),
+          maxPriorityFeePerGas: BigInt.from(1000000000),
+        );
+
+        expect(result.needsAuthorization, isFalse);
+        expect(result.authorization, isNull);
+
+        // Non-7702 flow: no eip7702Auth anywhere.
+        for (final req in paymasterRequests) {
+          final userOpJson =
+              (req['params'] as List<dynamic>)[0] as Map<String, dynamic>;
+          expect(
+            userOpJson.containsKey('eip7702Auth'),
+            isFalse,
+            reason: '${req['method']} must not carry eip7702Auth for non-7702',
+          );
+        }
+
+        // Paymaster data applied to the final op.
+        expect(result.userOperation.paymaster, isNotNull);
+        expect(result.userOperation.paymasterData, isNotNull);
+
+        // Exactly one paid pm_getPaymasterData for the whole flow (step 9).
+        expect(
+          paymasterRequests
+              .where((r) => r['method'] == 'pm_getPaymasterData')
+              .length,
+          equals(1),
+        );
+      },
+    );
 
     test('throws ArgumentError when token is not supported', () async {
       final publicClient = createPublicClientMock(isDeployed: true);
